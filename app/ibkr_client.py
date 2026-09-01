@@ -8,6 +8,14 @@ from .config import settings
 
 logger = logging.getLogger("ibkr_webhook.ibkr_client")
 
+# ib_async/IBKR ticker.marketDataType values: 1=Live, 2=Frozen, 3=Delayed,
+# 4=Delayed Frozen. Only live data is trustworthy enough to trade on.
+LIVE_MARKET_DATA_TYPE = 1
+
+
+class DelayedMarketDataError(RuntimeError):
+    """Raised when IBKR is only offering delayed/frozen data for a contract."""
+
 
 class IBKRClient:
     def __init__(self):
@@ -49,6 +57,12 @@ class IBKRClient:
                 await asyncio.sleep(step)
                 elapsed += step
                 if ticker.bid and ticker.ask and ticker.bid > 0 and ticker.ask > 0:
+                    if ticker.marketDataType != LIVE_MARKET_DATA_TYPE:
+                        raise DelayedMarketDataError(
+                            f"{contract.symbol} is only offering market data type "
+                            f"{ticker.marketDataType} (1=live, 2=frozen, 3=delayed, "
+                            "4=delayed-frozen) -- no live subscription for this symbol"
+                        )
                     return ticker.bid, ticker.ask
             raise RuntimeError(f"No live bid/ask received for {contract.symbol} within {timeout}s")
         finally:
@@ -92,6 +106,32 @@ class IBKRClient:
         trade = self.ib.placeOrder(contract, order)
         logger.info("Placed market order: %s %s x%s", action, contract.symbol, quantity)
         return trade
+
+    async def wait_for_fill(self, trade: Trade, timeout: float = 15.0) -> float:
+        """Waits for a (market) order to fill and returns the actually filled quantity.
+
+        IBKR doesn't always fill the full requested quantity (thin liquidity,
+        partial fills, etc.), so callers must size follow-up orders (stop,
+        take-profit) off the returned value, not the originally requested one.
+        """
+        await self.connect()
+        elapsed = 0.0
+        step = 0.25
+        while elapsed < timeout:
+            if trade.orderStatus.status == "Filled":
+                return trade.orderStatus.filled
+            await asyncio.sleep(step)
+            elapsed += step
+
+        filled = trade.orderStatus.filled
+        if filled and filled > 0:
+            logger.warning(
+                "Order %s not fully filled within %ss (requested=%s, filled=%s); "
+                "proceeding with the partial fill",
+                trade.order.orderId, timeout, trade.order.totalQuantity, filled,
+            )
+            return filled
+        raise RuntimeError(f"Order {trade.order.orderId} did not fill within {timeout}s")
 
     async def place_stop_order(self, contract, action: str, quantity: float, stop_price: float) -> Trade:
         order = StopOrder(action.upper(), quantity, stop_price)

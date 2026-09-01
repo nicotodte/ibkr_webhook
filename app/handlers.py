@@ -1,7 +1,7 @@
 import logging
 
 from .config import settings
-from .ibkr_client import ibkr_client
+from .ibkr_client import DelayedMarketDataError, ibkr_client
 from .models import BotAlert
 from .sizing import SizingError, calculate_quantity
 from .state import TradeState, position_store
@@ -32,6 +32,9 @@ async def handle_entry(alert: BotAlert) -> dict:
 
     try:
         bid, ask = await ibkr_client.get_bid_ask(contract)
+    except DelayedMarketDataError as exc:
+        logger.warning("Rejecting entry for %s: delayed/frozen market data (%s)", alert.symbol, exc)
+        return {"status": "rejected", "reason": "delayed_market_data"}
     except Exception as exc:
         logger.warning("Rejecting entry for %s: no live quote (%s)", alert.symbol, exc)
         return {"status": "rejected", "reason": "no_market_data"}
@@ -85,22 +88,39 @@ async def handle_entry(alert: BotAlert) -> dict:
             "fx_rate": fx_rate,
         }
 
-    await ibkr_client.place_market_order(contract, "BUY", quantity)
-    stop_trade = await ibkr_client.place_stop_order(contract, "SELL", quantity, alert.stop)
+    buy_trade = await ibkr_client.place_market_order(contract, "BUY", quantity)
+    try:
+        filled_qty = int(await ibkr_client.wait_for_fill(buy_trade))
+    except Exception as exc:
+        logger.warning("Rejecting entry for %s: buy order did not fill (%s)", alert.symbol, exc)
+        return {"status": "rejected", "reason": "order_not_filled"}
+
+    if filled_qty != quantity:
+        logger.warning(
+            "Partial fill for %s: requested=%s filled=%s -- sizing stop off the actual fill",
+            alert.symbol, quantity, filled_qty,
+        )
+
+    stop_trade = await ibkr_client.place_stop_order(contract, "SELL", filled_qty, alert.stop)
 
     await position_store.set(
         alert.symbol,
         TradeState(
             symbol=alert.symbol,
             trade_id=alert.trade_id,
-            quantity=quantity,
+            quantity=filled_qty,
             stop_order_id=stop_trade.order.orderId,
             stop_price=alert.stop,
             status="open",
         ),
     )
 
-    return {"status": "submitted", "symbol": alert.symbol, "quantity": quantity}
+    return {
+        "status": "submitted",
+        "symbol": alert.symbol,
+        "quantity": filled_qty,
+        "requested_quantity": quantity,
+    }
 
 
 async def handle_stop_to_breakeven(alert: BotAlert) -> dict:

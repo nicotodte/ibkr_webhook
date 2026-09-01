@@ -49,10 +49,12 @@ Position passt (Schutz gegen veraltete/verwechselte Signale).
 - Hostinger VPS (Ubuntu 22.04/24.04), Docker + Docker Compose Plugin
 - Eine Domain/Subdomain, deren A-Record auf die VPS-IP zeigt
 - IBKR Paper-Trading-Zugang (separate Login-Daten vom Live-Konto)
-- **Markdaten-Abo** für die gehandelten Symbole bei IBKR (der Spread-Check
-  und die EUR/USD-Kursabfrage brauchen Live- oder Delayed-Kurse; ohne
-  Abo schlagen beide fehl — das ist ein bewusst *sicherer* Fehlerzustand:
-  keine Daten → keine Order, statt eine Order ohne Spread-Check abzusetzen)
+- **Echtzeit-Marktdaten-Abo** für die gehandelten Symbole (Aktien und
+  Futures) bei IBKR — der Spread-Check und die EUR/USD-Kursabfrage brauchen
+  Live-Kurse. Ohne Abo, oder wenn IBKR für ein Symbol nur Delayed-Daten
+  liefert, wird der Entry abgelehnt — das ist ein bewusst *sicherer*
+  Fehlerzustand: keine Echtzeitdaten → keine Order, statt eine Order auf
+  Basis veralteter Kurse abzusetzen
 
 Docker installieren, falls noch nicht vorhanden:
 
@@ -181,11 +183,31 @@ Erst wenn Paper-Trading zuverlässig läuft:
 - **EUR/USD:** live über eine Forex-Kursabfrage bei IBKR (`EURUSD`), nicht
   über IBKR's internen `ExchangeRate`-Account-Tag, um Verwechslung der
   Umrechnungsrichtung auszuschließen.
-- **Was v1 nicht abdeckt:** Teilausführungen (Partial Fills) einer
-  Market-Order werden nicht gesondert behandelt — die Stop-Order wird für
-  die angeforderte Stückzahl gesetzt, nicht für die tatsächlich gefüllte.
-  Für Paper-Trading-Tests unkritisch, vor Live-Betrieb mit echten Fills
-  gegenprüfen.
+- **Partial Fills (Teilausführungen):** Nach dem Market-Buy wartet der Bot
+  auf die tatsächliche Ausführung (`IBKRClient.wait_for_fill`) und liest die
+  wirklich gefüllte Stückzahl aus dem Order-Status aus. Bekommt er z. B. nur
+  900 statt der berechneten 1000 Aktien, wird die Stop-Order für genau diese
+  900 Stück gesetzt und auch der gespeicherte Position-State (`quantity`)
+  auf 900 korrigiert — nicht auf die ursprünglich angeforderte Menge. Das
+  Gesamtrisiko in EUR sinkt dadurch automatisch proportional (Risiko pro
+  Aktie bleibt gleich, nur weniger Aktien). Die Gewinnmitnahme-Leiter
+  (`level`-Events) fragt ohnehin bei jedem Schritt die live-Position bei
+  IBKR ab statt den gespeicherten State zu benutzen, rechnet also immer
+  automatisch auf die tatsächlich vorhandene Stückzahl um.
+- **Nur Echtzeitdaten bei IBKR:** Vor jedem Entry prüft der Bot den
+  `marketDataType` des IBKR-Tickers (1 = Live). Liefert IBKR für ein Symbol
+  nur Delayed- oder Frozen-Daten (kein Echtzeit-Abo für dieses Symbol/diese
+  Aktien-/Futures-Kontraktklasse abgeschlossen), wird der Entry mit
+  `"reason": "delayed_market_data"` abgelehnt statt auf veralteten Kursen zu
+  handeln. Betrifft sowohl Aktien als auch Futures.
+- **Zeitverzug bei TradingView:** Der Bot bekommt aus dem Webhook-Payload
+  keine Information darüber, ob TradingView das Chart mit 15-Minuten-Verzug
+  anzeigt (das ist ein reines TradingView-Datenabo-Thema, das im Pine-Skript
+  technisch nicht auslesbar ist). Der obige Echtzeit-Check auf IBKR-Seite
+  fängt zuverlässig ab, dass der Bot selbst nie auf Basis veralteter Kurse
+  eine Order platziert — für TradingView-seitig verzögerte Symbole muss die
+  Watchlist/der Alert manuell auf Symbole mit TradingView-Echtzeit-Abo
+  beschränkt werden.
 
 ## Dateien
 
