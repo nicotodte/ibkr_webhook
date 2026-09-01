@@ -35,19 +35,33 @@ Jedes Event trägt eine `trade_id` (die Bar-Position des Fib-Ankers) — der
 Bot ignoriert Level-Events, deren `trade_id` nicht zur aktuell offenen
 Position passt (Schutz gegen veraltete/verwechselte Signale).
 
-## Architektur (3 Docker-Container)
+## Architektur (2 Docker-Container + externer Traefik-Reverse-Proxy)
 
 - **ib-gateway** — headless IB Gateway, Login/2FA-Automatisierung via IBC
   (Image `ghcr.io/gnzsnz/ib-gateway`). Nur im internen Docker-Netz erreichbar.
 - **webhook** — FastAPI-Service (`app/`), verwaltet Positionen und Orders.
   Persistiert offene Trades in `/data/positions.json` (Docker-Volume),
-  überlebt also einen Container-Neustart.
-- **caddy** — Reverse Proxy mit automatischem Let's-Encrypt-HTTPS.
+  überlebt also einen Container-Neustart. Wird per Traefik-Labels von einem
+  separat laufenden Traefik-Reverse-Proxy erkannt (kein eigener Reverse
+  Proxy mehr in diesem Stack).
+- **Reverse Proxy / HTTPS:** übernimmt ein separat deployter Traefik-Stack
+  (z. B. Hostinger Docker-Manager → "Traefik bereitstellen"), der per
+  Docker-Socket automatisch Container mit `traefik.enable=true`-Label
+  erkennt und Let's-Encrypt-Zertifikate zieht. Läuft er mit
+  `network_mode: host`, braucht er kein gemeinsames Docker-Netzwerk mit
+  diesem Stack — die Labels auf dem `webhook`-Service in
+  [docker-compose.yml](docker-compose.yml) reichen aus. Der
+  Certificate-Resolver-Name in den Labels (`letsencrypt`) muss zum Namen
+  passen, den der Traefik-Stack in seinem `--certificatesresolvers.<name>...`
+  Command-Flag verwendet.
 
 ## Voraussetzungen
 
 - Hostinger VPS (Ubuntu 22.04/24.04), Docker + Docker Compose Plugin
 - Eine Domain/Subdomain, deren A-Record auf die VPS-IP zeigt
+- Ein separat laufender Traefik-Reverse-Proxy auf demselben VPS (z. B. über
+  Hostinger Docker-Manager → "Traefik bereitstellen"), der Port 80/443
+  belegt und HTTPS für diesen Stack übernimmt — siehe Architektur oben
 - IBKR Paper-Trading-Zugang (separate Login-Daten vom Live-Konto)
 - **Echtzeit-Marktdaten-Abo** für die gehandelten Symbole (Aktien und
   Futures) bei IBKR — der Spread-Check und die EUR/USD-Kursabfrage brauchen
