@@ -1,0 +1,62 @@
+name: ibkr-webhook
+
+services:
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:latest
+    restart: unless-stopped
+    environment:
+      TWS_USERID: ${IB_USERID}
+      TWS_PASSWORD: ${IB_PASSWORD}
+      TRADING_MODE: ${TRADING_MODE:-paper}
+      READ_ONLY_API: "no"
+      TWOFA_TIMEOUT_ACTION: restart
+      RELOGIN_AFTER_TWOFA_TIMEOUT: "yes"
+      AUTO_RESTART_TIME: "11:59 PM"
+    # API ports are only reachable from other containers on this network,
+    # never published to the host/internet.
+    expose:
+      - "4003"
+      - "4004"
+    networks:
+      - ibkr_net
+
+  webhook:
+    build: ./app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      IB_HOST: ib-gateway
+      IB_PORT: ${IB_PORT:-4004}
+      STATE_FILE: /data/positions.json
+    volumes:
+      - webhook_state:/data
+    depends_on:
+      - ib-gateway
+    expose:
+      - "8000"
+    networks:
+      - ibkr_net
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - webhook
+    networks:
+      - ibkr_net
+
+networks:
+  ibkr_net:
+
+volumes:
+  caddy_data:
+  caddy_config:
+  webhook_state:
