@@ -4,10 +4,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 
-from .config import settings
-from .handlers import handle_entry, handle_exit_all, handle_level, handle_stop_to_breakeven
-from .ibkr_client import ibkr_client
-from .models import BotAlert
+from config import settings
+from handlers import handle_entry, handle_exit_all, handle_level, handle_stop_to_breakeven
+from ibkr_client import ibkr_client
+from models import BotAlert
 
 logging.basicConfig(
     level=logging.INFO,

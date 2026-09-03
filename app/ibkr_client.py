@@ -4,7 +4,7 @@ from typing import Optional
 
 from ib_async import IB, Forex, MarketOrder, Order, Position, Stock, StopOrder, Trade
 
-from .config import settings
+from config import settings
 
 logger = logging.getLogger("ibkr_webhook.ibkr_client")
 

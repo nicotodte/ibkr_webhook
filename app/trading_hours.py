@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from .config import settings
+from config import settings
 
 
 def is_within_trading_hours(now: datetime | None = None) -> bool:

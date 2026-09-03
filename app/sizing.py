@@ -1,6 +1,6 @@
 import math
 
-from .config import settings
+from config import settings
 
 
 class SizingError(ValueError):

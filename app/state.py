@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
-from .config import settings
+from config import settings
 
 logger = logging.getLogger("ibkr_webhook.state")
 
