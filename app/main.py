@@ -55,9 +55,11 @@ async def webhook(request: Request):
         logger.warning("Rejected malformed alert payload: %s", exc)
         raise HTTPException(status_code=400, detail="Invalid alert payload") from exc
 
-    if not hmac.compare_digest(alert.secret, settings.webhook_secret):
-        logger.warning("Rejected alert with invalid secret for symbol=%s", alert.symbol)
-        raise HTTPException(status_code=401, detail="Invalid secret")
+    # TEMPORARILY DISABLED while setting up the TradingView webhook secret
+    # input. The endpoint is public (Traefik) -- re-enable before going live.
+    # if not hmac.compare_digest(alert.secret, settings.webhook_secret):
+    #     logger.warning("Rejected alert with invalid secret for symbol=%s", alert.symbol)
+    #     raise HTTPException(status_code=401, detail="Invalid secret")
 
     logger.info("Alert received: event=%s symbol=%s trade_id=%s", alert.event, alert.symbol, alert.trade_id)
 
