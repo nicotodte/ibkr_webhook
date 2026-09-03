@@ -38,6 +38,11 @@ EVENT_HANDLERS = {
 
 @app.get("/health")
 async def health():
+    if not ibkr_client.ib.isConnected():
+        try:
+            await ibkr_client.connect()
+        except Exception:
+            logger.warning("Health check: IB Gateway still unreachable", exc_info=True)
     return {"status": "ok", "ib_connected": ibkr_client.ib.isConnected()}
 
 
