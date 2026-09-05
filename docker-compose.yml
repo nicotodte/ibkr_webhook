@@ -12,6 +12,10 @@ services:
       TWOFA_TIMEOUT_ACTION: restart
       RELOGIN_AFTER_TWOFA_TIMEOUT: "yes"
       AUTO_RESTART_TIME: "11:59 PM"
+      # Without this, IBC waits forever on the "Existing session detected"
+      # dialog (e.g. after an unclean restart) instead of taking over, and
+      # the Gateway's API port never comes up.
+      EXISTING_SESSION_DETECTED_ACTION: primary
     # API ports are only reachable from other containers on this network,
     # never published to the host/internet.
     expose:
