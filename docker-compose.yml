@@ -16,6 +16,20 @@ services:
       # dialog (e.g. after an unclean restart) instead of taking over, and
       # the Gateway's API port never comes up.
       EXISTING_SESSION_DETECTED_ACTION: primary
+    # Probes the *internal* gateway port (4001 live / 4002 paper), not the
+    # socat proxy (4003/4004) -- the proxy stays "up" and accepting
+    # connections even when Gateway itself is stuck behind an unhandled
+    # login dialog, so a socat-only check would miss exactly that failure.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >
+          port=4002; [ "$$TRADING_MODE" = "live" ] && port=4001;
+          timeout 3 bash -c "echo > /dev/tcp/127.0.0.1/$$port" || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
     # API ports are only reachable from other containers on this network,
     # never published to the host/internet.
     expose:
