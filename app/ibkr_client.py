@@ -64,7 +64,9 @@ class IBKRClient:
                             "4=delayed-frozen) -- no live subscription for this symbol"
                         )
                     return ticker.bid, ticker.ask
-            raise RuntimeError(f"No live bid/ask received for {contract.symbol} within {timeout}s")
+            raise RuntimeError(
+                f"No live bid/ask received for {contract.symbol} within {timeout}s"
+            )
         finally:
             self.ib.cancelMktData(contract)
 
@@ -87,12 +89,22 @@ class IBKRClient:
         finally:
             self.ib.cancelMktData(contract)
 
-    async def get_available_cash_base_currency(self) -> float:
+    async def get_available_cash_base_currency(self, timeout: float = 10.0) -> float:
+        # Account values arrive asynchronously after connect (ib_async's own
+        # connect timeout for this is 4s and silently swallowed if missed),
+        # so a fresh/just-reconnected session can briefly have none yet.
         await self.connect()
-        for v in self.ib.accountValues():
-            if v.tag == "TotalCashValue" and v.currency == "BASE":
-                return float(v.value)
-        raise RuntimeError("TotalCashValue (BASE) not found in account values")
+        elapsed = 0.0
+        step = 0.25
+        while elapsed < timeout:
+            for v in self.ib.accountValues():
+                if v.tag == "TotalCashValue" and v.currency == "BASE":
+                    return float(v.value)
+            await asyncio.sleep(step)
+            elapsed += step
+        raise RuntimeError(
+            f"TotalCashValue (BASE) not found in account values within {timeout}s"
+        )
 
     async def get_position(self, symbol: str) -> Optional[Position]:
         await self.connect()
@@ -128,17 +140,28 @@ class IBKRClient:
             logger.warning(
                 "Order %s not fully filled within %ss (requested=%s, filled=%s); "
                 "proceeding with the partial fill",
-                trade.order.orderId, timeout, trade.order.totalQuantity, filled,
+                trade.order.orderId,
+                timeout,
+                trade.order.totalQuantity,
+                filled,
             )
             return filled
-        raise RuntimeError(f"Order {trade.order.orderId} did not fill within {timeout}s")
+        raise RuntimeError(
+            f"Order {trade.order.orderId} did not fill within {timeout}s"
+        )
 
-    async def place_stop_order(self, contract, action: str, quantity: float, stop_price: float) -> Trade:
+    async def place_stop_order(
+        self, contract, action: str, quantity: float, stop_price: float
+    ) -> Trade:
         order = StopOrder(action.upper(), quantity, stop_price)
         trade = self.ib.placeOrder(contract, order)
         logger.info(
             "Placed stop order: %s %s x%s @ %s (orderId=%s)",
-            action, contract.symbol, quantity, stop_price, trade.order.orderId,
+            action,
+            contract.symbol,
+            quantity,
+            stop_price,
+            trade.order.orderId,
         )
         return trade
 
@@ -150,7 +173,11 @@ class IBKRClient:
         trade = self.ib.placeOrder(contract, order)
         logger.info(
             "Modified stop order %s: %s %s x%s @ %s",
-            order_id, action, contract.symbol, quantity, stop_price,
+            order_id,
+            action,
+            contract.symbol,
+            quantity,
+            stop_price,
         )
         return trade
 
