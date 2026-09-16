@@ -90,20 +90,25 @@ class IBKRClient:
             self.ib.cancelMktData(contract)
 
     async def get_available_cash_base_currency(self, timeout: float = 10.0) -> float:
-        # Account values arrive asynchronously after connect (ib_async's own
-        # connect timeout for this is 4s and silently swallowed if missed),
-        # so a fresh/just-reconnected session can briefly have none yet.
+        # Deliberately uses accountSummary (reqAccountSummary, group "All")
+        # rather than accountValues()/reqAccountUpdates: ib_async's connect()
+        # only auto-subscribes reqAccountUpdates when exactly one managed
+        # account is reported, otherwise it falls back to
+        # reqAccountUpdatesMulti, which never emits a "BASE"-currency row --
+        # so on multi-account logins TotalCashValue (BASE) would never
+        # appear no matter how long we poll. accountSummary always includes
+        # the BASE aggregate regardless of account count.
         await self.connect()
         elapsed = 0.0
         step = 0.25
         while elapsed < timeout:
-            for v in self.ib.accountValues():
+            for v in await self.ib.accountSummaryAsync():
                 if v.tag == "TotalCashValue" and v.currency == "BASE":
                     return float(v.value)
             await asyncio.sleep(step)
             elapsed += step
         raise RuntimeError(
-            f"TotalCashValue (BASE) not found in account values within {timeout}s"
+            f"TotalCashValue (BASE) not found in account summary within {timeout}s"
         )
 
     async def get_position(self, symbol: str) -> Optional[Position]:
