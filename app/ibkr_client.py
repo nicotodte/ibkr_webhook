@@ -94,21 +94,35 @@ class IBKRClient:
         # rather than accountValues()/reqAccountUpdates: ib_async's connect()
         # only auto-subscribes reqAccountUpdates when exactly one managed
         # account is reported, otherwise it falls back to
-        # reqAccountUpdatesMulti, which never emits a "BASE"-currency row --
-        # so on multi-account logins TotalCashValue (BASE) would never
-        # appear no matter how long we poll. accountSummary always includes
-        # the BASE aggregate regardless of account count.
+        # reqAccountUpdatesMulti, which never emits a "BASE"-currency row.
+        #
+        # Even accountSummary's "BASE" (account-base-currency aggregate)
+        # row doesn't always show up -- some single-currency accounts only
+        # ever report their one holding currency and IBKR skips the
+        # otherwise-redundant BASE echo. So besides "BASE" we also accept a
+        # row already in our configured account_currency: since that IS the
+        # account's base currency, no conversion is needed and the value is
+        # equivalent.
         await self.connect()
         elapsed = 0.0
         step = 0.25
+        cash_by_currency: dict[str, float] = {}
         while elapsed < timeout:
-            for v in await self.ib.accountSummaryAsync():
-                if v.tag == "TotalCashValue" and v.currency == "BASE":
-                    return float(v.value)
+            cash_by_currency = {
+                v.currency: float(v.value)
+                for v in await self.ib.accountSummaryAsync()
+                if v.tag == "TotalCashValue"
+            }
+            if "BASE" in cash_by_currency:
+                return cash_by_currency["BASE"]
+            if settings.account_currency in cash_by_currency:
+                return cash_by_currency[settings.account_currency]
             await asyncio.sleep(step)
             elapsed += step
         raise RuntimeError(
-            f"TotalCashValue (BASE) not found in account summary within {timeout}s"
+            f"TotalCashValue (BASE or {settings.account_currency}) not found in "
+            f"account summary within {timeout}s (currencies seen: "
+            f"{sorted(cash_by_currency) or 'none'})"
         )
 
     async def get_position(self, symbol: str) -> Optional[Position]:
