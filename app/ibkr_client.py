@@ -12,6 +12,13 @@ logger = logging.getLogger("ibkr_webhook.ibkr_client")
 # 4=Delayed Frozen. Only live data is trustworthy enough to trade on.
 LIVE_MARKET_DATA_TYPE = 1
 
+# ib_async initialises Ticker.marketDataType to 1 and only overwrites it once
+# IBKR sends a marketDataType callback for that request, so an untouched
+# ticker claims "live" whether or not IBKR ever confirmed it. Overwriting it
+# with this sentinel right after reqMktData makes the two cases
+# distinguishable: anything left over is what IBKR actually reported.
+UNREPORTED_MARKET_DATA_TYPE = 0
+
 
 class DelayedMarketDataError(RuntimeError):
     """Raised when IBKR is only offering delayed/frozen data for a contract."""
@@ -50,6 +57,7 @@ class IBKRClient:
     async def get_bid_ask(self, contract, timeout: float = 10.0) -> tuple[float, float]:
         await self.connect()
         ticker = self.ib.reqMktData(contract, "", False, False)
+        ticker.marketDataType = UNREPORTED_MARKET_DATA_TYPE
         try:
             elapsed = 0.0
             step = 0.25
@@ -57,12 +65,20 @@ class IBKRClient:
                 await asyncio.sleep(step)
                 elapsed += step
                 if ticker.bid and ticker.ask and ticker.bid > 0 and ticker.ask > 0:
-                    if ticker.marketDataType != LIVE_MARKET_DATA_TYPE:
+                    if ticker.marketDataType == UNREPORTED_MARKET_DATA_TYPE:
+                        logger.warning(
+                            "%s: IBKR never reported a market data type, so this "
+                            "quote cannot be confirmed as live",
+                            contract.symbol,
+                        )
+                    elif ticker.marketDataType != LIVE_MARKET_DATA_TYPE:
                         raise DelayedMarketDataError(
                             f"{contract.symbol} is only offering market data type "
                             f"{ticker.marketDataType} (1=live, 2=frozen, 3=delayed, "
                             "4=delayed-frozen) -- no live subscription for this symbol"
                         )
+                    else:
+                        logger.info("%s: live market data confirmed", contract.symbol)
                     return ticker.bid, ticker.ask
             raise RuntimeError(
                 f"No live bid/ask received for {contract.symbol} within {timeout}s"
