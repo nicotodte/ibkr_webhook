@@ -186,7 +186,10 @@ Erst wenn Paper-Trading zuverlässig läuft:
 - **Cash-Limit:** vor jedem Entry wird `TotalCashValue` (Basiswährung EUR)
   live bei IBKR abgefragt; reicht das nicht für die neue Position, wird
   sie abgelehnt. Mehrere Symbole können parallel offen sein, solange
-  jeweils genug Cash da ist — es gibt keine Margin-Nutzung.
+  jeweils genug Cash da ist — es gibt keine Margin-Nutzung. Sendet IBKR
+  keine explizite `BASE`-Zeile (manche Single-Currency-Konten tun das
+  nicht), akzeptiert der Bot ersatzweise eine Zeile in der konfigurierten
+  Kontowährung, da diese dann der Basiswährung entspricht.
 - **Teilverkäufe als Market-Order:** wie besprochen — da der Spread schon
   beim Entry geprüft wird, ist eine Limit-Order mit Ausführungsrisiko
   hier nicht nötig.
