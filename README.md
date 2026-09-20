@@ -181,8 +181,13 @@ Erst wenn Paper-Trading zuverlässig läuft:
   keine DST-Logik nötig. Das Zeitfenster gilt **nur für neue Entries**;
   eine bereits offene Position wird auch außerhalb davon weiter verwaltet
   (Stop/Teilverkäufe), damit nichts unbeaufsichtigt offen bleibt.
-- **Spread-Filter:** Entry wird abgelehnt, wenn `(Ask-Bid)/Mid > 0.05%`
-  (`MAX_SPREAD_PCT` in `.env`).
+- **Spread-Filter:** Entry wird abgelehnt, wenn `(Ask-Bid)/Mid` über
+  `MAX_SPREAD_PCT` liegt (Angabe in Prozent). Der Code-Default `0.05`
+  (= 0,05 %) ist bewusst eng und für Live-Betrieb gedacht; beim
+  Paper-Testen mit verzögerten Kursen ist er zu scharf, weil die
+  Momentaufnahme einer 15-Minuten-alten Quote breiter ausfällt und der
+  Entry dann an `spread_too_wide` scheitert. Dafür `MAX_SPREAD_PCT=0.5`
+  in die `.env` setzen und vor dem Live-Betrieb wieder zurückdrehen.
 - **Cash-Limit:** vor jedem Entry wird `TotalCashValue` (Basiswährung EUR)
   live bei IBKR abgefragt; reicht das nicht für die neue Position, wird
   sie abgelehnt. Mehrere Symbole können parallel offen sein, solange
