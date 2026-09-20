@@ -11,6 +11,7 @@ logger = logging.getLogger("ibkr_webhook.ibkr_client")
 # ib_async/IBKR ticker.marketDataType values: 1=Live, 2=Frozen, 3=Delayed,
 # 4=Delayed Frozen. Only live data is trustworthy enough to trade on.
 LIVE_MARKET_DATA_TYPE = 1
+DELAYED_MARKET_DATA_TYPE = 3
 
 # ib_async initialises Ticker.marketDataType to 1 and only overwrites it once
 # IBKR sends a marketDataType callback for that request, so an untouched
@@ -34,9 +35,15 @@ class IBKRClient:
         await self.ib.connectAsync(
             settings.ib_host, settings.ib_port, clientId=settings.ib_client_id
         )
-        # Real-time market data; falls back to whatever the account is
-        # actually entitled to (IBKR itself decides live vs delayed).
-        self.ib.reqMarketDataType(1)
+        # Type 1 is live-only: where the account holds no entitlement IBKR
+        # answers with error 354 and sends no ticks at all rather than
+        # quietly downgrading. Type 3 asks for delayed quotes and still
+        # yields live ones wherever the entitlement does apply.
+        self.ib.reqMarketDataType(
+            DELAYED_MARKET_DATA_TYPE
+            if settings.allow_delayed_market_data
+            else LIVE_MARKET_DATA_TYPE
+        )
         accounts = self.ib.managedAccounts()
         if not accounts:
             raise RuntimeError("No managed accounts returned by IB Gateway")
@@ -72,10 +79,18 @@ class IBKRClient:
                             contract.symbol,
                         )
                     elif ticker.marketDataType != LIVE_MARKET_DATA_TYPE:
-                        raise DelayedMarketDataError(
-                            f"{contract.symbol} is only offering market data type "
-                            f"{ticker.marketDataType} (1=live, 2=frozen, 3=delayed, "
-                            "4=delayed-frozen) -- no live subscription for this symbol"
+                        if not settings.allow_delayed_market_data:
+                            raise DelayedMarketDataError(
+                                f"{contract.symbol} is only offering market data type "
+                                f"{ticker.marketDataType} (1=live, 2=frozen, 3=delayed, "
+                                "4=delayed-frozen) -- no live subscription for this symbol"
+                            )
+                        logger.warning(
+                            "%s: trading on market data type %s (1=live, 2=frozen, "
+                            "3=delayed, 4=delayed-frozen) -- prices may be up to 15 "
+                            "minutes old, ALLOW_DELAYED_MARKET_DATA is on",
+                            contract.symbol,
+                            ticker.marketDataType,
                         )
                     else:
                         logger.info("%s: live market data confirmed", contract.symbol)

@@ -218,7 +218,19 @@ Erst wenn Paper-Trading zuverlässig läuft:
   nur Delayed- oder Frozen-Daten (kein Echtzeit-Abo für dieses Symbol/diese
   Aktien-/Futures-Kontraktklasse abgeschlossen), wird der Entry mit
   `"reason": "delayed_market_data"` abgelehnt statt auf veralteten Kursen zu
-  handeln. Betrifft sowohl Aktien als auch Futures.
+  handeln. Betrifft sowohl Aktien als auch Futures. Meldet IBKR überhaupt
+  keinen Typ, wird das protokolliert — `ib_async` belegt das Feld nämlich
+  mit 1 vor, „live" wäre hier also eine unbelegte Annahme.
+- **`ALLOW_DELAYED_MARKET_DATA` (nur fürs Paper-Trading):** Echtzeit-Abos
+  werden zwischen Live- und Paper-Login geteilt, aber IBKR vergibt das
+  Recht immer nur an **eine** aktive Sitzung. Bist du selbst eingeloggt,
+  steht das Gateway ohne Kurse da und jeder Entry scheitert an
+  `no_market_data`. Mit `ALLOW_DELAYED_MARKET_DATA=true` fordert der Bot
+  stattdessen verzögerte Kurse an (`reqMarketDataType(3)`; wo die
+  Berechtigung greift, liefert IBKR weiterhin Live-Daten) und handelt auf
+  bis zu 15 Minuten alten Preisen. Das ist eine Testkrücke, um die Kette
+  Entry → Breakeven → Teilverkäufe durchzuspielen — **vor dem Live-Betrieb
+  zwingend wieder auf `false`**.
 - **Zeitverzug bei TradingView:** Der Bot bekommt aus dem Webhook-Payload
   keine Information darüber, ob TradingView das Chart mit 15-Minuten-Verzug
   anzeigt (das ist ein reines TradingView-Datenabo-Thema, das im Pine-Skript

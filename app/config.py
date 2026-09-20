@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     # Entry guardrails.
     max_spread_pct: float = 0.05  # percent, e.g. 0.05 = 0.05%
 
+    # Paper-trading escape hatch. IBKR hands the shared real-time
+    # entitlement to only one active session at a time, so the gateway is
+    # left without live quotes whenever the live login is in use. With this
+    # on, the bot asks for delayed quotes and trades on them -- prices are
+    # then up to 15 minutes old, so keep it off for live trading.
+    allow_delayed_market_data: bool = False
+
     # Trading window in UTC. 16-21 CEST and 15-20 CET are both 14:00-19:00
     # UTC, so this single fixed window covers both halves of the year with
     # no DST handling needed.
