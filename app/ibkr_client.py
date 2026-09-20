@@ -89,40 +89,35 @@ class IBKRClient:
         finally:
             self.ib.cancelMktData(contract)
 
-    async def get_available_cash_base_currency(self, timeout: float = 10.0) -> float:
-        # Deliberately uses accountSummary (reqAccountSummary, group "All")
-        # rather than accountValues()/reqAccountUpdates: ib_async's connect()
-        # only auto-subscribes reqAccountUpdates when exactly one managed
-        # account is reported, otherwise it falls back to
-        # reqAccountUpdatesMulti, which never emits a "BASE"-currency row.
-        #
-        # Even accountSummary's "BASE" (account-base-currency aggregate)
-        # row doesn't always show up -- some single-currency accounts only
-        # ever report their one holding currency and IBKR skips the
-        # otherwise-redundant BASE echo. So besides "BASE" we also accept a
-        # row already in our configured account_currency: since that IS the
-        # account's base currency, no conversion is needed and the value is
-        # equivalent.
+    async def get_available_cash_base_currency(self) -> float:
+        # reqAccountSummary reports every value already converted into the
+        # account's base currency, and the row's currency field names that
+        # base currency (e.g. "EUR"). It is never the literal "BASE" --
+        # that pseudo-currency only exists in reqAccountUpdates/
+        # updateAccountValue output, so filtering for it here could never
+        # match. Polling doesn't help either: accountSummaryAsync awaits
+        # accountSummaryEnd on its first call and caches the result, so a
+        # retry loop would just re-read the same dict.
         await self.connect()
-        elapsed = 0.0
-        step = 0.25
-        cash_by_currency: dict[str, float] = {}
-        while elapsed < timeout:
-            cash_by_currency = {
-                v.currency: float(v.value)
-                for v in await self.ib.accountSummaryAsync()
-                if v.tag == "TotalCashValue"
-            }
-            if "BASE" in cash_by_currency:
-                return cash_by_currency["BASE"]
-            if settings.account_currency in cash_by_currency:
-                return cash_by_currency[settings.account_currency]
-            await asyncio.sleep(step)
-            elapsed += step
+        cash_by_currency = {
+            v.currency: float(v.value)
+            for v in await self.ib.accountSummaryAsync()
+            if v.tag == "TotalCashValue"
+        }
+        if not cash_by_currency:
+            raise RuntimeError("No TotalCashValue row in account summary")
+
+        for currency in ("BASE", settings.account_currency):
+            if currency in cash_by_currency:
+                return cash_by_currency[currency]
+
+        # Refuse to reinterpret a foreign-currency figure as base currency:
+        # that would silently mis-size every position.
         raise RuntimeError(
-            f"TotalCashValue (BASE or {settings.account_currency}) not found in "
-            f"account summary within {timeout}s (currencies seen: "
-            f"{sorted(cash_by_currency) or 'none'})"
+            f"Account summary reports TotalCashValue only in "
+            f"{sorted(cash_by_currency)}, not in the configured "
+            f"ACCOUNT_CURRENCY={settings.account_currency} -- set "
+            f"ACCOUNT_CURRENCY to the account's actual base currency"
         )
 
     async def get_position(self, symbol: str) -> Optional[Position]:
