@@ -1,6 +1,9 @@
+import logging
 import math
 
 from config import settings
+
+logger = logging.getLogger("ibkr_webhook.sizing")
 
 
 class SizingError(ValueError):
@@ -13,8 +16,8 @@ def calculate_quantity(entry_price_usd: float, stop_price_usd: float, fx_rate_eu
     fixed_shares mode: always settings.fixed_shares_qty (phase 1: just
     validate the wiring end-to-end with a trivial position size).
 
-    fixed_risk mode: risk a fixed EUR amount per trade, converted to USD
-    at the live EUR/USD rate, capped by max_position_eur notional.
+    fixed_risk mode: risk settings.fixed_risk_usd per trade, i.e. quantity =
+    risk / (entry - stop), capped by the max_position_eur notional limit.
     """
     if settings.sizing_mode == "fixed_shares":
         if settings.fixed_shares_qty < 1:
@@ -25,11 +28,21 @@ def calculate_quantity(entry_price_usd: float, stop_price_usd: float, fx_rate_eu
     if per_share_risk <= 0:
         raise SizingError("entry and stop price must differ")
 
-    risk_usd = settings.fixed_risk_eur * fx_rate_eur_usd
+    risk_usd = settings.fixed_risk_usd
     raw_qty = risk_usd / per_share_risk
 
     max_qty_by_notional = (settings.max_position_eur * fx_rate_eur_usd) / entry_price_usd
     qty = math.floor(min(raw_qty, max_qty_by_notional))
+
+    if max_qty_by_notional < raw_qty:
+        # Worth saying out loud: the trade now risks less than configured,
+        # which looks like a sizing bug from the outside.
+        logger.info(
+            "Position cap bound for entry %.2f: %d shares instead of %d, "
+            "risking %.2f USD instead of %.2f",
+            entry_price_usd, qty, math.floor(raw_qty),
+            qty * per_share_risk, risk_usd,
+        )
 
     if qty < 1:
         raise SizingError(

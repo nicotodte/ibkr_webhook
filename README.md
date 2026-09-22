@@ -159,12 +159,21 @@ durchläuft. Sobald das zuverlässig funktioniert:
 
 ```
 SIZING_MODE=fixed_risk
-FIXED_RISK_EUR=100
+FIXED_RISK_USD=100
 MAX_POSITION_EUR=50000
 ```
 
-Dann: Stückzahl = (100€ × aktueller EUR/USD-Kurs) ÷ |Entry − Stop| in USD,
-gedeckelt durch die 50.000€-Positionsgrenze.
+Dann: Stückzahl = `FIXED_RISK_USD ÷ |Entry − Stop|`. Beispiel: Entry 250,00 $,
+Stop 249,50 $ → 0,50 $ Risiko je Aktie → 200 Stück, macht 100 $ Risiko.
+Das Risiko ist bewusst in USD angegeben, weil Entry und Stop von
+TradingView in USD kommen — eine Umrechnung würde den Betrag nur mit dem
+Tageskurs verwackeln.
+
+Gedeckelt wird das Ganze durch `MAX_POSITION_EUR`. Greift der Deckel,
+fällt das Risiko unter den eingestellten Wert; der Bot protokolliert das
+dann mit `Position cap bound`, damit die kleinere Stückzahl nicht wie ein
+Rechenfehler aussieht. Bei engen Stops ist das schnell der Fall: 0,10 $
+Abstand ergäbe rechnerisch 1.000 Stück à 119 $ — also weit über 50.000 €.
 
 ## Live schalten
 

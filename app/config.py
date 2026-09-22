@@ -29,7 +29,10 @@ class Settings(BaseSettings):
     # switch to fixed_risk once confidence is established.
     sizing_mode: Literal["fixed_shares", "fixed_risk"] = "fixed_shares"
     fixed_shares_qty: int = 1
-    fixed_risk_eur: float = 100.0
+    # Risk per trade in the traded instrument's currency: the loss if the stop
+    # fills exactly at its trigger. Entry and stop arrive from TradingView in
+    # USD, so the risk is USD too and needs no FX conversion.
+    fixed_risk_usd: float = 100.0
     max_position_eur: float = 50000.0
 
     # Entry guardrails.
