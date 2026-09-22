@@ -199,6 +199,10 @@ class IBKRClient:
         self, contract, action: str, quantity: float, stop_price: float
     ) -> Trade:
         order = StopOrder(action.upper(), quantity, stop_price)
+        # Without an explicit TIF the account's order preset fills in DAY
+        # (IBKR says so via error 10349), which would quietly drop the
+        # protective stop at the close while the position stays open.
+        order.tif = "GTC"
         trade = self.ib.placeOrder(contract, order)
         logger.info(
             "Placed stop order: %s %s x%s @ %s (orderId=%s)",
@@ -215,6 +219,7 @@ class IBKRClient:
     ) -> Trade:
         order = StopOrder(action.upper(), quantity, stop_price)
         order.orderId = order_id
+        order.tif = "GTC"
         trade = self.ib.placeOrder(contract, order)
         logger.info(
             "Modified stop order %s: %s %s x%s @ %s",

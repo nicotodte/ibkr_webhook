@@ -17,6 +17,10 @@ class TradeState:
     quantity: int
     stop_order_id: int
     stop_price: float
+    # Average fill price of the entry order. Kept here because IBKR's
+    # Position.avgCost folds the commission into the per-share figure, which
+    # at small share counts sits far above what was actually paid.
+    entry_price: float
     status: str = "open"  # open | closed
 
 

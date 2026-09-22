@@ -13,11 +13,22 @@ logger = logging.getLogger("ibkr_webhook.handlers")
 async def handle_entry(alert: BotAlert) -> dict:
     existing = await position_store.get(alert.symbol)
     if existing and existing.status == "open":
-        logger.warning(
-            "Ignoring entry for %s: already have an open bot position (trade_id=%s)",
+        live = await ibkr_client.get_position(alert.symbol)
+        if live and live.position > 0:
+            logger.warning(
+                "Ignoring entry for %s: already have an open bot position (trade_id=%s)",
+                alert.symbol, existing.trade_id,
+            )
+            return {"status": "ignored", "reason": "position_already_open"}
+        # Nothing holds the stored trade open any more -- most likely its stop
+        # filled, which the bot is never told about. Without this the symbol
+        # would stay blocked for every future entry.
+        logger.info(
+            "Clearing stale state for %s (trade_id=%s): IBKR reports no position",
             alert.symbol, existing.trade_id,
         )
-        return {"status": "ignored", "reason": "position_already_open"}
+        await ibkr_client.cancel_order(existing.stop_order_id)
+        await position_store.delete(alert.symbol)
 
     if not is_within_trading_hours():
         logger.info("Ignoring entry for %s: outside trading hours", alert.symbol)
@@ -111,6 +122,7 @@ async def handle_entry(alert: BotAlert) -> dict:
             quantity=filled_qty,
             stop_order_id=stop_trade.order.orderId,
             stop_price=alert.stop,
+            entry_price=buy_trade.orderStatus.avgFillPrice,
             status="open",
         ),
     )
@@ -142,12 +154,15 @@ async def handle_stop_to_breakeven(alert: BotAlert) -> dict:
     contract = await ibkr_client.qualify_stock(
         alert.symbol, settings.default_exchange, settings.default_currency
     )
+    # Deliberately not pos.avgCost: IBKR folds the commission into it, so at
+    # one share a $1 commission puts "breakeven" a full dollar above the real
+    # entry -- i.e. a SELL stop above the market, which fires immediately.
     await ibkr_client.modify_stop_order(
-        contract, state.stop_order_id, "SELL", pos.position, pos.avgCost
+        contract, state.stop_order_id, "SELL", pos.position, state.entry_price
     )
-    state.stop_price = pos.avgCost
+    state.stop_price = state.entry_price
     await position_store.set(alert.symbol, state)
-    return {"status": "stop_updated", "symbol": alert.symbol, "new_stop": pos.avgCost}
+    return {"status": "stop_updated", "symbol": alert.symbol, "new_stop": state.entry_price}
 
 
 async def handle_level(alert: BotAlert) -> dict:
