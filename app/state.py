@@ -67,5 +67,9 @@ class PositionStore:
             self._trades.pop(symbol, None)
             self._save()
 
+    async def all_open(self) -> list[TradeState]:
+        async with self._lock:
+            return [t for t in self._trades.values() if t.status == "open"]
+
 
 position_store = PositionStore(settings.state_file)

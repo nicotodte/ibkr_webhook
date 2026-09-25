@@ -35,6 +35,16 @@ Jedes Event trägt eine `trade_id` (die Bar-Position des Fib-Ankers) — der
 Bot ignoriert Level-Events, deren `trade_id` nicht zur aktuell offenen
 Position passt (Schutz gegen veraltete/verwechselte Signale).
 
+### Glattstellung vor Handelsschluss
+
+Unabhängig von Pine-Alerts prüft der Bot per Timer, ob `FLATTEN_BEFORE_CLOSE_MINUTES`
+(Default 10) vor `TRADING_END_UTC_HOUR` erreicht ist. Sobald das der Fall
+ist, werden **alle** bot-verwalteten offenen Positionen einmalig verkauft
+und ihre Stop-Orders storniert — unabhängig davon, welches Fib-Level
+zuletzt berührt wurde. Das verhindert, dass eine Position über Nacht mit
+offenem Stop stehen bleibt und am nächsten Handelstag in eine Kurslücke
+läuft.
+
 ## Architektur (2 Docker-Container + externer Traefik-Reverse-Proxy)
 
 - **ib-gateway** — headless IB Gateway, Login/2FA-Automatisierung via IBC

@@ -235,3 +235,31 @@ async def handle_exit_all(alert: BotAlert) -> dict:
     await position_store.delete(alert.symbol)
     logger.info("Exit-all for %s: sold %s, position closed", alert.symbol, qty)
     return {"status": "closed", "symbol": alert.symbol, "sold": qty}
+
+
+async def flatten_all_before_close() -> dict:
+    """Force-closes every bot-managed open position, independent of any
+    TradingView alert. Called on a timer shortly before market close so a
+    stop never sits through the close and reopens the position on the next
+    session's gap.
+    """
+    closed = []
+    for state in await position_store.all_open():
+        try:
+            pos = await ibkr_client.get_position(state.symbol)
+            qty = int(pos.position) if pos else 0
+
+            await ibkr_client.cancel_order(state.stop_order_id)
+            if qty > 0:
+                contract = await ibkr_client.qualify_stock(
+                    state.symbol, settings.default_exchange, settings.default_currency
+                )
+                await ibkr_client.place_market_order(contract, "SELL", qty)
+
+            await position_store.delete(state.symbol)
+            logger.info("Flattened %s before close: sold %s", state.symbol, qty)
+            closed.append({"symbol": state.symbol, "sold": qty})
+        except Exception:
+            logger.exception("Failed to flatten %s before close", state.symbol)
+
+    return {"status": "flattened", "positions": closed}

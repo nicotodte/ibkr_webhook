@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     trading_start_utc_hour: int = 14
     trading_end_utc_hour: int = 19
 
+    # How long before trading_end_utc_hour every bot-managed open position
+    # gets force-closed at market, stop cancelled. Protects against a stop
+    # that would otherwise sit through the close and reopen the position on
+    # the next session's gap.
+    flatten_before_close_minutes: int = 10
+
     # Where open-position state (symbol -> trade_id/qty/stop order) is
     # persisted so it survives a webhook container restart.
     state_file: str = "/data/positions.json"

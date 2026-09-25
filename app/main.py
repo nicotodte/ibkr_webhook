@@ -1,19 +1,47 @@
+import asyncio
 import hmac
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request
 
 from config import settings
-from handlers import handle_entry, handle_exit_all, handle_level, handle_stop_to_breakeven
+from handlers import (
+    flatten_all_before_close,
+    handle_entry,
+    handle_exit_all,
+    handle_level,
+    handle_stop_to_breakeven,
+)
 from ibkr_client import ibkr_client
 from models import BotAlert
+from trading_hours import is_within_closing_flatten_window
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("ibkr_webhook.main")
+
+FLATTEN_POLL_INTERVAL_SECONDS = 30
+
+
+async def _flatten_before_close_loop():
+    # Guards against re-flattening on every poll tick while the window is
+    # open: only fires once per calendar day, then waits for the window to
+    # pass before it can arm again the following day.
+    last_flattened_date = None
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            if is_within_closing_flatten_window(now) and last_flattened_date != now.date():
+                logger.info("Flatten window reached, closing all open bot positions")
+                await flatten_all_before_close()
+                last_flattened_date = now.date()
+        except Exception:
+            logger.exception("Error while checking/executing pre-close flatten")
+        await asyncio.sleep(FLATTEN_POLL_INTERVAL_SECONDS)
 
 
 @asynccontextmanager
@@ -22,7 +50,9 @@ async def lifespan(app: FastAPI):
         await ibkr_client.connect()
     except Exception:
         logger.exception("Could not connect to IB Gateway at startup, will retry on first request")
+    flatten_task = asyncio.create_task(_flatten_before_close_loop())
     yield
+    flatten_task.cancel()
     await ibkr_client.disconnect()
 
 
