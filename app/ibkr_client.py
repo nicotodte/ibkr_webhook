@@ -5,6 +5,7 @@ from typing import Optional
 from ib_async import IB, Forex, MarketOrder, Order, Position, Stock, StopOrder, Trade
 
 from config import settings
+from spread import QuoteSample
 
 logger = logging.getLogger("ibkr_webhook.ibkr_client")
 
@@ -23,6 +24,10 @@ UNREPORTED_MARKET_DATA_TYPE = 0
 
 class DelayedMarketDataError(RuntimeError):
     """Raised when IBKR is only offering delayed/frozen data for a contract."""
+
+
+def _has_quote(ticker) -> bool:
+    return bool(ticker.bid and ticker.ask and ticker.bid > 0 and ticker.ask > 0)
 
 
 class IBKRClient:
@@ -61,43 +66,60 @@ class IBKRClient:
             raise RuntimeError(f"Could not qualify contract for symbol {symbol}")
         return qualified[0]
 
-    async def get_bid_ask(self, contract, timeout: float = 10.0) -> tuple[float, float]:
+    async def get_quote_samples(
+        self, contract, window: float, timeout: float = 10.0
+    ) -> list[QuoteSample]:
+        """Waits for the first valid quote, then keeps sampling for `window` seconds.
+
+        Returns every valid bid/ask observed, oldest first, so the caller can
+        judge the spread over time instead of off a single tick. The market
+        data type is checked on the first valid quote.
+        """
         await self.connect()
         ticker = self.ib.reqMktData(contract, "", False, False)
         ticker.marketDataType = UNREPORTED_MARKET_DATA_TYPE
+        step = 0.25
         try:
-            elapsed = 0.0
-            step = 0.25
-            while elapsed < timeout:
+            waited = 0.0
+            while not _has_quote(ticker):
+                if waited >= timeout:
+                    raise RuntimeError(
+                        f"No live bid/ask received for {contract.symbol} within {timeout}s"
+                    )
                 await asyncio.sleep(step)
-                elapsed += step
-                if ticker.bid and ticker.ask and ticker.bid > 0 and ticker.ask > 0:
-                    if ticker.marketDataType == UNREPORTED_MARKET_DATA_TYPE:
-                        logger.warning(
-                            "%s: IBKR never reported a market data type, so this "
-                            "quote cannot be confirmed as live",
-                            contract.symbol,
-                        )
-                    elif ticker.marketDataType != LIVE_MARKET_DATA_TYPE:
-                        if not settings.allow_delayed_market_data:
-                            raise DelayedMarketDataError(
-                                f"{contract.symbol} is only offering market data type "
-                                f"{ticker.marketDataType} (1=live, 2=frozen, 3=delayed, "
-                                "4=delayed-frozen) -- no live subscription for this symbol"
-                            )
-                        logger.warning(
-                            "%s: trading on market data type %s (1=live, 2=frozen, "
-                            "3=delayed, 4=delayed-frozen) -- prices may be up to 15 "
-                            "minutes old, ALLOW_DELAYED_MARKET_DATA is on",
-                            contract.symbol,
-                            ticker.marketDataType,
-                        )
-                    else:
-                        logger.info("%s: live market data confirmed", contract.symbol)
-                    return ticker.bid, ticker.ask
-            raise RuntimeError(
-                f"No live bid/ask received for {contract.symbol} within {timeout}s"
-            )
+                waited += step
+
+            if ticker.marketDataType == UNREPORTED_MARKET_DATA_TYPE:
+                logger.warning(
+                    "%s: IBKR never reported a market data type, so this "
+                    "quote cannot be confirmed as live",
+                    contract.symbol,
+                )
+            elif ticker.marketDataType != LIVE_MARKET_DATA_TYPE:
+                if not settings.allow_delayed_market_data:
+                    raise DelayedMarketDataError(
+                        f"{contract.symbol} is only offering market data type "
+                        f"{ticker.marketDataType} (1=live, 2=frozen, 3=delayed, "
+                        "4=delayed-frozen) -- no live subscription for this symbol"
+                    )
+                logger.warning(
+                    "%s: trading on market data type %s (1=live, 2=frozen, "
+                    "3=delayed, 4=delayed-frozen) -- prices may be up to 15 "
+                    "minutes old, ALLOW_DELAYED_MARKET_DATA is on",
+                    contract.symbol,
+                    ticker.marketDataType,
+                )
+            else:
+                logger.info("%s: live market data confirmed", contract.symbol)
+
+            samples = [QuoteSample(ticker.bid, ticker.ask)]
+            collected = 0.0
+            while collected < window:
+                await asyncio.sleep(step)
+                collected += step
+                if _has_quote(ticker):
+                    samples.append(QuoteSample(ticker.bid, ticker.ask))
+            return samples
         finally:
             self.ib.cancelMktData(contract)
 

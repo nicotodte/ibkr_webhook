@@ -38,6 +38,22 @@ class Settings(BaseSettings):
     # Entry guardrails.
     max_spread_pct: float = 0.05  # percent, e.g. 0.05 = 0.05%
 
+    # Quotes are collected for this many seconds before an entry is judged,
+    # so one odd tick can't decide it. Every second adds to the webhook's
+    # response time, and TradingView gives up on a webhook after 3 seconds
+    # (the order is still processed, the alert log just shows a failure).
+    quote_sample_window_seconds: float = 2.0
+
+    # The spread must also stay small next to what the trade risks per share
+    # (entry - stop): a spread that is fine as a percentage of the price can
+    # still eat most of a tight stop. 0 disables the check.
+    max_spread_pct_of_risk: float = 25.0
+
+    # Reject the entry if the ask has run above the TradingView entry price
+    # by more than this share of the per-share risk -- the setup that fired
+    # is no longer the one being bought. 0 disables the check.
+    max_entry_slippage_pct_of_risk: float = 25.0
+
     # Paper-trading escape hatch. IBKR hands the shared real-time
     # entitlement to only one active session at a time, so the gateway is
     # left without live quotes whenever the live login is in use. With this

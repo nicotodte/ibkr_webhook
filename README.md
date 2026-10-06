@@ -200,13 +200,42 @@ Erst wenn Paper-Trading zuverlässig läuft:
   keine DST-Logik nötig. Das Zeitfenster gilt **nur für neue Entries**;
   eine bereits offene Position wird auch außerhalb davon weiter verwaltet
   (Stop/Teilverkäufe), damit nichts unbeaufsichtigt offen bleibt.
-- **Spread-Filter:** Entry wird abgelehnt, wenn `(Ask-Bid)/Mid` über
-  `MAX_SPREAD_PCT` liegt (Angabe in Prozent). Der Code-Default `0.05`
-  (= 0,05 %) ist bewusst eng und für Live-Betrieb gedacht; beim
-  Paper-Testen mit verzögerten Kursen ist er zu scharf, weil die
-  Momentaufnahme einer 15-Minuten-alten Quote breiter ausfällt und der
-  Entry dann an `spread_too_wide` scheitert. Dafür `MAX_SPREAD_PCT=0.5`
-  in die `.env` setzen und vor dem Live-Betrieb wieder zurückdrehen.
+- **Spread-Filter:** Der Bot sammelt nach dem Entry-Alert
+  `QUOTE_SAMPLE_WINDOW_SECONDS` (Default 2 s) lang Bid/Ask-Quotes, statt
+  sich auf einen einzelnen Tick zu verlassen. Bewertet wird der
+  **schlechtere** Wert aus dem Median des Fensters und der letzten Quote:
+  ein einzelner Ausreißer am Anfang lehnt nicht ab, aber ein Spread, der
+  jetzt breit ist (oder über das Fenster überwiegend breit war), lehnt
+  immer ab. Mitteln kann den Einstieg also nie günstiger rechnen als ein
+  einzelner Blick. Es gelten drei Regeln, alle müssen bestehen:
+  - `spread_too_wide`: `(Ask-Bid)/Mid` über `MAX_SPREAD_PCT` (in Prozent).
+    Der Default `0.05` (= 0,05 %) ist für Live-Betrieb gedacht; beim
+    Paper-Testen mit verzögerten Kursen ist er zu scharf. Dafür
+    `MAX_SPREAD_PCT=0.5` in die `.env` setzen und vor dem Live-Betrieb
+    wieder zurückdrehen.
+  - `spread_too_wide_for_risk`: der Spread darf höchstens
+    `MAX_SPREAD_PCT_OF_RISK` (Default 25) Prozent des Risikos pro Aktie
+    betragen. Risiko = `min(Entry, aktueller Ask) − Stop`: fällt der Kurs
+    Richtung Stop, wird der Spread relativ größer, nie kleiner. Beispiel:
+    Entry 200,00, Stop 199,74 → Risiko 0,26 → maximal 0,065 Spread. Ein
+    Spread von 10–20 Cent wird damit abgelehnt, auch wenn er in Prozent
+    vom Kurs klein wirkt. `0` schaltet die Regel ab.
+  - `price_ran_away`: liegt der letzte Ask um mehr als
+    `MAX_ENTRY_SLIPPAGE_PCT_OF_RISK` (Default 25) Prozent des Risikos über
+    dem Entry-Preis aus TradingView, wird nicht mehr gekauft — das Setup,
+    das ausgelöst hat, ist dann nicht mehr das, was man kaufen würde.
+    `0` schaltet die Regel ab.
+
+  Außerdem lehnt der Bot ab, wenn der Stop nicht unter dem Entry liegt
+  (`stop_not_below_entry`) oder der Kurs schon am/unter dem Stop steht
+  (`price_at_or_below_stop`). Positionswert und Cash-Check rechnen mit dem
+  letzten Ask des Fensters, also dort, wo ein Market-Buy tatsächlich
+  füllen würde. Jeder Entry loggt Bid, Ask, Spread in USD und Prozent,
+  Median/letzten/größten Spread und das Verhältnis zum Risiko
+  (`Quote check <SYMBOL>: …`), auch bei Ablehnung.
+  Das Sammeln kostet Zeit: TradingView bricht Webhooks nach 3 Sekunden ab.
+  Die Order wird trotzdem verarbeitet, im TradingView-Alert-Log steht dann
+  aber ein Fehler.
 - **Cash-Limit:** vor jedem Entry wird `TotalCashValue` (Basiswährung EUR)
   live bei IBKR abgefragt; reicht das nicht für die neue Position, wird
   sie abgelehnt. Mehrere Symbole können parallel offen sein, solange
@@ -271,6 +300,7 @@ Erst wenn Paper-Trading zuverlässig läuft:
 - `app/main.py` — Webhook-Endpunkt, Auth, Event-Routing
 - `app/handlers.py` — Logik pro Event (entry/breakeven/level/exit_all)
 - `app/sizing.py` — Stückzahl-Berechnung (fixed_shares / fixed_risk)
+- `app/spread.py` — Bewertung der gesammelten Bid/Ask-Quotes (Spread, Risiko-Verhältnis, Preisdrift)
 - `app/state.py` — persistenter Positions-State pro Symbol
 - `app/trading_hours.py` — UTC-Handelsfenster
 - `app/ibkr_client.py` — IBKR-Verbindung, Kurse, Orders (ib_async)

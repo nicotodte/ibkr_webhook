@@ -4,6 +4,7 @@ from config import settings
 from ibkr_client import DelayedMarketDataError, ibkr_client
 from models import BotAlert
 from sizing import SizingError, calculate_quantity
+from spread import assess_entry_quotes
 from state import TradeState, position_store
 from trading_hours import is_within_trading_hours
 
@@ -42,7 +43,9 @@ async def handle_entry(alert: BotAlert) -> dict:
     )
 
     try:
-        bid, ask = await ibkr_client.get_bid_ask(contract)
+        samples = await ibkr_client.get_quote_samples(
+            contract, settings.quote_sample_window_seconds
+        )
     except DelayedMarketDataError as exc:
         logger.warning("Rejecting entry for %s: delayed/frozen market data (%s)", alert.symbol, exc)
         return {"status": "rejected", "reason": "delayed_market_data"}
@@ -50,14 +53,37 @@ async def handle_entry(alert: BotAlert) -> dict:
         logger.warning("Rejecting entry for %s: no live quote (%s)", alert.symbol, exc)
         return {"status": "rejected", "reason": "no_market_data"}
 
-    mid = (bid + ask) / 2
-    spread_pct = (ask - bid) / mid * 100
-    if spread_pct > settings.max_spread_pct:
-        logger.info(
-            "Rejecting entry for %s: spread %.3f%% > max %.3f%%",
-            alert.symbol, spread_pct, settings.max_spread_pct,
-        )
-        return {"status": "rejected", "reason": "spread_too_wide", "spread_pct": spread_pct}
+    quote = assess_entry_quotes(
+        samples,
+        alert.entry,
+        alert.stop,
+        settings.max_spread_pct,
+        settings.max_spread_pct_of_risk,
+        settings.max_entry_slippage_pct_of_risk,
+    )
+    logger.info(
+        "Quote check %s: bid=%.4f ask=%.4f | spread %.4f USD (%.3f%%) judged on the worse of "
+        "median %.4f and latest %.4f, max %.4f over %d samples | risk/share %.4f: spread is "
+        "%.0f%% of risk, ask is %.0f%% of risk above entry %s",
+        alert.symbol, quote.bid, quote.ask, quote.decision_spread, quote.spread_pct,
+        quote.median_spread, quote.latest_spread, quote.max_spread, quote.samples,
+        quote.risk_per_share, quote.spread_pct_of_risk, quote.slippage_pct_of_risk, alert.entry,
+    )
+    if not quote.ok:
+        logger.info("Rejecting entry for %s: %s", alert.symbol, quote.reason)
+        return {
+            "status": "rejected",
+            "reason": quote.reason,
+            "bid": quote.bid,
+            "ask": quote.ask,
+            "spread": quote.decision_spread,
+            "spread_pct": quote.spread_pct,
+            "spread_pct_of_risk": quote.spread_pct_of_risk,
+            "slippage_pct_of_risk": quote.slippage_pct_of_risk,
+        }
+    # The ask at the end of the window is where a market buy would fill.
+    ask = quote.ask
+    spread_pct = quote.spread_pct
 
     try:
         fx_rate = await ibkr_client.get_fx_rate(settings.fx_pair)
