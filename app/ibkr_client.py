@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from typing import Optional
+import time
+from typing import Callable, Optional
 
 from ib_async import IB, Forex, MarketOrder, Order, Position, Stock, StopOrder, Trade
 
@@ -21,6 +22,14 @@ DELAYED_MARKET_DATA_TYPE = 3
 # distinguishable: anything left over is what IBKR actually reported.
 UNREPORTED_MARKET_DATA_TYPE = 0
 
+# How often the quote is looked at while waiting for it. Short, because the
+# first look that passes is what sends the order.
+QUOTE_POLL_SECONDS = 0.05
+
+# main.py refreshes EUR/USD every few minutes; a cached rate older than this
+# means that refresh is failing, so fetch a live one instead.
+FX_CACHE_MAX_AGE_SECONDS = 20 * 60
+
 
 class DelayedMarketDataError(RuntimeError):
     """Raised when IBKR is only offering delayed/frozen data for a contract."""
@@ -33,6 +42,8 @@ def _has_quote(ticker) -> bool:
 class IBKRClient:
     def __init__(self):
         self.ib = IB()
+        # pair -> (rate, time.monotonic() when it was fetched)
+        self._fx_cache: dict[str, tuple[float, float]] = {}
 
     async def connect(self):
         if self.ib.isConnected():
@@ -67,18 +78,24 @@ class IBKRClient:
         return qualified[0]
 
     async def get_quote_samples(
-        self, contract, window: float, timeout: float = 10.0
+        self,
+        contract,
+        max_wait: float,
+        accept: Callable[[list[QuoteSample]], bool],
+        timeout: float = 10.0,
     ) -> list[QuoteSample]:
-        """Waits for the first valid quote, then keeps sampling for `window` seconds.
+        """Returns the bid/ask quotes seen, oldest first, as soon as `accept` is satisfied.
 
-        Returns every valid bid/ask observed, oldest first, so the caller can
-        judge the spread over time instead of off a single tick. The market
-        data type is checked on the first valid quote.
+        `accept` is run on the samples so far after every new one, starting
+        with the very first valid quote: if that already passes, the caller
+        gets it back immediately and nothing waits. Only while it doesn't
+        pass does this keep sampling, up to `max_wait` seconds, to see
+        whether the quote settles. The market data type is checked on the
+        first valid quote.
         """
         await self.connect()
         ticker = self.ib.reqMktData(contract, "", False, False)
         ticker.marketDataType = UNREPORTED_MARKET_DATA_TYPE
-        step = 0.25
         try:
             waited = 0.0
             while not _has_quote(ticker):
@@ -86,8 +103,8 @@ class IBKRClient:
                     raise RuntimeError(
                         f"No live bid/ask received for {contract.symbol} within {timeout}s"
                     )
-                await asyncio.sleep(step)
-                waited += step
+                await asyncio.sleep(QUOTE_POLL_SECONDS)
+                waited += QUOTE_POLL_SECONDS
 
             if ticker.marketDataType == UNREPORTED_MARKET_DATA_TYPE:
                 logger.warning(
@@ -114,9 +131,9 @@ class IBKRClient:
 
             samples = [QuoteSample(ticker.bid, ticker.ask)]
             collected = 0.0
-            while collected < window:
-                await asyncio.sleep(step)
-                collected += step
+            while not accept(samples) and collected < max_wait:
+                await asyncio.sleep(QUOTE_POLL_SECONDS)
+                collected += QUOTE_POLL_SECONDS
                 if _has_quote(ticker):
                     samples.append(QuoteSample(ticker.bid, ticker.ask))
             return samples
@@ -124,6 +141,19 @@ class IBKRClient:
             self.ib.cancelMktData(contract)
 
     async def get_fx_rate(self, pair: str = "EURUSD", timeout: float = 10.0) -> float:
+        """Returns the cached rate while it is fresh, otherwise fetches a live one.
+
+        EUR/USD only feeds the cash check and the position cap, where a few
+        minutes of drift is irrelevant, so a live request -- which can cost
+        the entry seconds -- is only made when refresh_fx_rate has not kept
+        the cache warm.
+        """
+        cached = self._fx_cache.get(pair)
+        if cached and time.monotonic() - cached[1] < FX_CACHE_MAX_AGE_SECONDS:
+            return cached[0]
+        return await self.refresh_fx_rate(pair, timeout)
+
+    async def refresh_fx_rate(self, pair: str = "EURUSD", timeout: float = 10.0) -> float:
         await self.connect()
         contract = Forex(pair)
         await self.ib.qualifyContractsAsync(contract)
@@ -134,10 +164,14 @@ class IBKRClient:
             while elapsed < timeout:
                 await asyncio.sleep(step)
                 elapsed += step
+                rate = None
                 if ticker.bid and ticker.ask and ticker.bid > 0 and ticker.ask > 0:
-                    return (ticker.bid + ticker.ask) / 2
-                if ticker.last and ticker.last > 0:
-                    return ticker.last
+                    rate = (ticker.bid + ticker.ask) / 2
+                elif ticker.last and ticker.last > 0:
+                    rate = ticker.last
+                if rate:
+                    self._fx_cache[pair] = (rate, time.monotonic())
+                    return rate
             raise RuntimeError(f"No live FX rate for {pair} within {timeout}s")
         finally:
             self.ib.cancelMktData(contract)

@@ -25,6 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger("ibkr_webhook.main")
 
 FLATTEN_POLL_INTERVAL_SECONDS = 30
+FX_REFRESH_INTERVAL_SECONDS = 300
 
 
 async def _flatten_before_close_loop():
@@ -44,6 +45,19 @@ async def _flatten_before_close_loop():
         await asyncio.sleep(FLATTEN_POLL_INTERVAL_SECONDS)
 
 
+async def _fx_refresh_loop():
+    # Keeps the EUR/USD rate warm so an entry never waits on a live request
+    # for it. Only refreshes while connected: a reconnect here could race the
+    # one a webhook request or health check is already making.
+    while True:
+        try:
+            if ibkr_client.ib.isConnected():
+                await ibkr_client.refresh_fx_rate(settings.fx_pair)
+        except Exception as exc:
+            logger.warning("Could not refresh %s rate: %s", settings.fx_pair, exc)
+        await asyncio.sleep(FX_REFRESH_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -51,8 +65,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Could not connect to IB Gateway at startup, will retry on first request")
     flatten_task = asyncio.create_task(_flatten_before_close_loop())
+    fx_task = asyncio.create_task(_fx_refresh_loop())
     yield
     flatten_task.cancel()
+    fx_task.cancel()
     await ibkr_client.disconnect()
 
 

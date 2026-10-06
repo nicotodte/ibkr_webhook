@@ -38,11 +38,14 @@ class Settings(BaseSettings):
     # Entry guardrails.
     max_spread_pct: float = 0.05  # percent, e.g. 0.05 = 0.05%
 
-    # Quotes are collected for this many seconds before an entry is judged,
-    # so one odd tick can't decide it. Every second adds to the webhook's
-    # response time, and TradingView gives up on a webhook after 3 seconds
-    # (the order is still processed, the alert log just shows a failure).
-    quote_sample_window_seconds: float = 2.0
+    # An entry goes out the moment the quote passes every check. Only while it
+    # doesn't, the bot keeps watching it for up to this many seconds to see
+    # whether it settles (an odd first tick, a spread that closes again).
+    # Waiting is only ever spent on entries that would otherwise be
+    # rejected, so it can't delay one that is good. TradingView gives up on
+    # a webhook after 3 seconds (the order is still processed, the alert
+    # log just shows a failure).
+    quote_max_wait_seconds: float = 2.0
 
     # The spread must also stay small next to what the trade risks per share
     # (entry - stop): a spread that is fine as a percentage of the price can

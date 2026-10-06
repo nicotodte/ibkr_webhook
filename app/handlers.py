@@ -42,9 +42,20 @@ async def handle_entry(alert: BotAlert) -> dict:
         alert.symbol, settings.default_exchange, settings.default_currency
     )
 
+    def assess(samples):
+        return assess_entry_quotes(
+            samples,
+            alert.entry,
+            alert.stop,
+            settings.max_spread_pct,
+            settings.max_spread_pct_of_risk,
+            settings.max_entry_slippage_pct_of_risk,
+        )
+
     try:
+        # Returns the moment the quote passes, so a good spread buys at once.
         samples = await ibkr_client.get_quote_samples(
-            contract, settings.quote_sample_window_seconds
+            contract, settings.quote_max_wait_seconds, lambda s: assess(s).ok
         )
     except DelayedMarketDataError as exc:
         logger.warning("Rejecting entry for %s: delayed/frozen market data (%s)", alert.symbol, exc)
@@ -53,14 +64,7 @@ async def handle_entry(alert: BotAlert) -> dict:
         logger.warning("Rejecting entry for %s: no live quote (%s)", alert.symbol, exc)
         return {"status": "rejected", "reason": "no_market_data"}
 
-    quote = assess_entry_quotes(
-        samples,
-        alert.entry,
-        alert.stop,
-        settings.max_spread_pct,
-        settings.max_spread_pct_of_risk,
-        settings.max_entry_slippage_pct_of_risk,
-    )
+    quote = assess(samples)
     logger.info(
         "Quote check %s: bid=%.4f ask=%.4f | spread %.4f USD (%.3f%%) judged on the worse of "
         "median %.4f and latest %.4f, max %.4f over %d samples | risk/share %.4f: spread is "

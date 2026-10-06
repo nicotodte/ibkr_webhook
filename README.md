@@ -200,14 +200,17 @@ Erst wenn Paper-Trading zuverlässig läuft:
   keine DST-Logik nötig. Das Zeitfenster gilt **nur für neue Entries**;
   eine bereits offene Position wird auch außerhalb davon weiter verwaltet
   (Stop/Teilverkäufe), damit nichts unbeaufsichtigt offen bleibt.
-- **Spread-Filter:** Der Bot sammelt nach dem Entry-Alert
-  `QUOTE_SAMPLE_WINDOW_SECONDS` (Default 2 s) lang Bid/Ask-Quotes, statt
-  sich auf einen einzelnen Tick zu verlassen. Bewertet wird der
-  **schlechtere** Wert aus dem Median des Fensters und der letzten Quote:
-  ein einzelner Ausreißer am Anfang lehnt nicht ab, aber ein Spread, der
-  jetzt breit ist (oder über das Fenster überwiegend breit war), lehnt
-  immer ab. Mitteln kann den Einstieg also nie günstiger rechnen als ein
-  einzelner Blick. Es gelten drei Regeln, alle müssen bestehen:
+- **Spread-Filter:** Passt die erste Quote nach dem Entry-Alert, kauft der
+  Bot **sofort** — es wird nichts abgewartet. Nur wenn sie nicht passt,
+  beobachtet er die Quote bis zu `QUOTE_MAX_WAIT_SECONDS` (Default 2 s)
+  weiter, ob sie sich beruhigt, und kauft, sobald sie alle Regeln besteht.
+  Gewartet wird also nur bei Entries, die sonst abgelehnt würden. Ab dem
+  zweiten Sample wird der **schlechtere** Wert aus dem Median und der
+  letzten Quote bewertet: ein Spread, der jetzt breit ist (oder über die
+  Wartezeit überwiegend breit war), lehnt immer ab, Mitteln kann den
+  Einstieg also nie günstiger rechnen als ein einzelner Blick. Die
+  Kehrseite des Sofort-Kaufs: Eine einzelne, zufällig enge erste Quote
+  reicht zum Einstieg. Es gelten drei Regeln, alle müssen bestehen:
   - `spread_too_wide`: `(Ask-Bid)/Mid` über `MAX_SPREAD_PCT` (in Prozent).
     Der Default `0.05` (= 0,05 %) ist für Live-Betrieb gedacht; beim
     Paper-Testen mit verzögerten Kursen ist er zu scharf. Dafür
@@ -233,9 +236,12 @@ Erst wenn Paper-Trading zuverlässig läuft:
   füllen würde. Jeder Entry loggt Bid, Ask, Spread in USD und Prozent,
   Median/letzten/größten Spread und das Verhältnis zum Risiko
   (`Quote check <SYMBOL>: …`), auch bei Ablehnung.
-  Das Sammeln kostet Zeit: TradingView bricht Webhooks nach 3 Sekunden ab.
-  Die Order wird trotzdem verarbeitet, im TradingView-Alert-Log steht dann
-  aber ein Fehler.
+  Der EUR/USD-Kurs für Cash-Check und Positionsgrenze wird im Hintergrund
+  alle 5 Minuten aufgefrischt und beim Entry aus dem Zwischenspeicher
+  gelesen (nur bei einem Ausfall des Refreshs wird live nachgefragt), damit
+  der Entry nicht darauf warten muss. TradingView bricht Webhooks nach
+  3 Sekunden ab; die Order wird trotzdem verarbeitet, im Alert-Log steht
+  dann aber ein Fehler.
 - **Cash-Limit:** vor jedem Entry wird `TotalCashValue` (Basiswährung EUR)
   live bei IBKR abgefragt; reicht das nicht für die neue Position, wird
   sie abgelehnt. Mehrere Symbole können parallel offen sein, solange
