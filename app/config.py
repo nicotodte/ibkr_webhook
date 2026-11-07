@@ -72,8 +72,9 @@ class Settings(BaseSettings):
     trading_skip_minutes_after_open: int = 30
     trading_stop_minutes_before_close: int = 60
 
-    # How long before the end of that window every bot-managed open position
-    # gets force-closed at market, stop cancelled. Protects against a stop
+    # How long before the market close (16:00 ET) every bot-managed open
+    # position gets force-closed at market, stop cancelled. Positions opened
+    # late in the window keep being managed until then. Protects against a stop
     # that would otherwise sit through the close and reopen the position on
     # the next session's gap.
     flatten_before_close_minutes: int = 10

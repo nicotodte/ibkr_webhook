@@ -38,8 +38,8 @@ Position passt (Schutz gegen veraltete/verwechselte Signale).
 ### Glattstellung vor Handelsschluss
 
 Unabhängig von Pine-Alerts prüft der Bot per Timer, ob `FLATTEN_BEFORE_CLOSE_MINUTES`
-(Default 10) vor dem Ende des Handelsfensters (siehe „Handelszeiten“ unten)
-erreicht ist. Sobald das der Fall ist, werden **alle** bot-verwalteten offenen Positionen einmalig verkauft
+(Default 10) vor dem Börsenschluss (16:00 ET, also 15:50 ET) erreicht ist.
+Sobald das der Fall ist, werden **alle** bot-verwalteten offenen Positionen einmalig verkauft
 und ihre Stop-Orders storniert — unabhängig davon, welches Fib-Level
 zuletzt berührt wurde. Das verhindert, dass eine Position über Nacht mit
 offenem Stop stehen bleibt und am nächsten Handelstag in eine Kurslücke
@@ -203,8 +203,9 @@ Erst wenn Paper-Trading zuverlässig läuft:
   Minuten vor dem Schluss, also 10:00–15:00 ET (in Deutschland 16–21 Uhr,
   in den Wochen mit abweichender Zeitumstellung 15–20 Uhr). Das Zeitfenster
   gilt **nur für neue Entries**; eine bereits offene Position wird auch
-  außerhalb davon weiter verwaltet (Stop/Teilverkäufe), damit nichts
-  unbeaufsichtigt offen bleibt.
+  außerhalb davon weiter verwaltet (Stop/Teilverkäufe) und erst kurz vor
+  dem Börsenschluss komplett glattgestellt, damit nichts über Nacht offen
+  bleibt.
 - **Spread-Filter:** Passt die erste Quote nach dem Entry-Alert, kauft der
   Bot **sofort** — es wird nichts abgewartet. Nur wenn sie nicht passt,
   beobachtet er die Quote bis zu `QUOTE_MAX_WAIT_SECONDS` (Default 2 s)
