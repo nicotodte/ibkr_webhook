@@ -64,13 +64,15 @@ class Settings(BaseSettings):
     # then up to 15 minutes old, so keep it off for live trading.
     allow_delayed_market_data: bool = False
 
-    # Trading window in UTC. 16-21 CEST and 15-20 CET are both 14:00-19:00
-    # UTC, so this single fixed window covers both halves of the year with
-    # no DST handling needed.
-    trading_start_utc_hour: int = 14
-    trading_end_utc_hour: int = 19
+    # Trading window in US exchange time (DST handled by the timezone). The
+    # regular session runs 09:30-16:00 ET; no new entries during the first
+    # trading_skip_minutes_after_open minutes and none during the last
+    # trading_stop_minutes_before_close minutes, i.e. 10:00-15:00 ET.
+    trading_timezone: str = "America/New_York"
+    trading_skip_minutes_after_open: int = 30
+    trading_stop_minutes_before_close: int = 60
 
-    # How long before trading_end_utc_hour every bot-managed open position
+    # How long before the end of that window every bot-managed open position
     # gets force-closed at market, stop cancelled. Protects against a stop
     # that would otherwise sit through the close and reopen the position on
     # the next session's gap.
