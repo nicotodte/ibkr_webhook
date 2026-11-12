@@ -45,6 +45,38 @@ zuletzt berührt wurde. Das verhindert, dass eine Position über Nacht mit
 offenem Stop stehen bleibt und am nächsten Handelstag in eine Kurslücke
 läuft.
 
+Ausnahme: Doji-Trades, die schon auf dem Trail laufen (10 R erreicht),
+bleiben offen, solange `DOJI_KEEP_TRAILING_OVERNIGHT=true` ist (siehe unten).
+
+### Doji-Trades (Event `doji`)
+
+Das Longterm-Skript („Fibonacci Longterm Achtung/HOLD") schickt bei einem
+grünen, gelben oder orangen Doji **ein** JSON-Event; alles Weitere macht der
+Bot selbst, es kommen keine Folge-Alerts.
+
+```json
+{"secret": "…", "event": "doji", "symbol": "NVDA", "trade_id": "1762790100000",
+ "entry": 167.79, "stop": 167.61, "tier": "green"}
+```
+
+| Schritt | Was der Bot tut |
+|---|---|
+| Einstieg | Gleiche Prüfungen wie beim TF-Entry (Spread, Echtzeitdaten, Cash). Stückzahl = Risiko der Farbe / (entry − stop): grün `DOJI_RISK_GREEN_USD` (100), gelb 50, orange 25 — unabhängig von `SIZING_MODE`. Market-Buy, dann Stop-Order und drei Limit-Verkäufe. |
+| R | Tatsächlicher Kaufkurs − Stop |
+| 2 R / 5 R / 10 R | je ¼ der Position per Limit-Order (liegen von Anfang an bei IBKR, auch außerhalb der Handelszeit gültig). Rest bei kleinen Stückzahlen: 13 → 3, 3, 3, 4 |
+| Stopp-Treppe | 1,5 R erreicht → Stopp auf Einstieg; 5 R → Stopp auf 2 R; 10 R → Stopp auf 5 R |
+| Trail | ab 10 R läuft der Stopp `DOJI_TRAIL_R_…` × R unter dem Höchstkurs mit (grün/gelb 5 R, orange 3 R) |
+| Handelsschluss | Positionen ohne Trail werden wie alle anderen 10 Min vor Schluss verkauft. Positionen mit Trail bleiben offen. |
+| Außerhalb der Handelszeit | IBKR führt dort keine Stop-Orders aus. Der Bot prüft den Bid alle `DOJI_MONITOR_INTERVAL_SECONDS` selbst (Vorbörse 04:00–09:30 ET, Nachbörse 16:00–20:00 ET) und verkauft bei Unterschreiten des Stopps per Limit `DOJI_EXTENDED_EXIT_BELOW_BID_PCT` (0,5 %) unter dem Bid. In der Nachtsitzung (20:00–04:00 ET) wird nicht gehandelt. |
+
+Doji- und TF-Trades auf demselben Symbol schließen sich gegenseitig aus:
+solange einer offen ist, wird der andere ignoriert. Doji-Einstiege sind von
+der Eröffnung bis `DOJI_STOP_MINUTES_BEFORE_CLOSE` (15) Minuten vor Schluss
+erlaubt — die 30-Minuten-Sperre nach der Eröffnung gilt für Dojis nicht.
+
+Der Listenalarm des Longterm-Skripts schickt auch seine Achtung/HOLD/K=0-
+Texte an den Webhook; alles, was nicht mit `{` beginnt, ignoriert der Bot.
+
 ## Architektur (2 Docker-Container + externer Traefik-Reverse-Proxy)
 
 - **ib-gateway** — headless IB Gateway, Login/2FA-Automatisierung via IBC

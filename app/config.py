@@ -79,6 +79,35 @@ class Settings(BaseSettings):
     # the next session's gap.
     flatten_before_close_minutes: int = 10
 
+    # Doji trades from the "Fibonacci Longterm Achtung/HOLD" script (event
+    # "doji"). Sized by the risk of their colour, not by sizing_mode: the
+    # quarter exits need a real share count.
+    doji_enabled: bool = True
+    doji_risk_green_usd: float = 100.0
+    doji_risk_yellow_usd: float = 50.0
+    doji_risk_orange_usd: float = 25.0
+    # Entry window for Doji trades. Many good orange Dojis come in the first
+    # minutes after the open, so unlike the TF entries they are not skipped.
+    # The alert comes a few seconds after the Doji candle closed, often into
+    # a fast bounce, and Doji risk per share is small -- the TF limit of 25 %
+    # of R would turn away many good ones. 0 disables the check.
+    doji_max_entry_slippage_pct_of_risk: float = 50.0
+    doji_skip_minutes_after_open: int = 0
+    doji_stop_minutes_before_close: int = 15
+    # Stop ladder: breakeven at this R, trailing distance (in R) once 10 R is
+    # reached, per colour.
+    doji_breakeven_r: float = 1.5
+    doji_trail_r_green: float = 5.0
+    doji_trail_r_yellow: float = 5.0
+    doji_trail_r_orange: float = 3.0
+    # Positions already trailing (10 R reached) stay open through the close;
+    # all other Doji positions are flattened with the rest. Outside regular
+    # hours the bot watches the price itself and sells with a limit this far
+    # below the bid once the stop is crossed (IBKR runs no stop orders there).
+    doji_keep_trailing_overnight: bool = True
+    doji_extended_exit_below_bid_pct: float = 0.5
+    doji_monitor_interval_seconds: float = 2.0
+
     # Where open-position state (symbol -> trade_id/qty/stop order) is
     # persisted so it survives a webhook container restart.
     state_file: str = "/data/positions.json"

@@ -9,10 +9,12 @@ from fastapi import FastAPI, HTTPException, Request
 from config import settings
 from handlers import (
     flatten_all_before_close,
+    handle_doji,
     handle_entry,
     handle_exit_all,
     handle_level,
     handle_stop_to_breakeven,
+    manage_doji_positions,
 )
 from ibkr_client import ibkr_client
 from models import BotAlert
@@ -58,6 +60,19 @@ async def _fx_refresh_loop():
         await asyncio.sleep(FX_REFRESH_INTERVAL_SECONDS)
 
 
+async def _doji_monitor_loop():
+    # Drives every open Doji trade: stop ladder, trail, target fills and the
+    # exit outside regular hours. Skips passes while the gateway is down
+    # rather than reconnecting here, like the FX loop.
+    while True:
+        try:
+            if ibkr_client.ib.isConnected():
+                await manage_doji_positions()
+        except Exception:
+            logger.exception("Error in the Doji monitor")
+        await asyncio.sleep(settings.doji_monitor_interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -66,9 +81,11 @@ async def lifespan(app: FastAPI):
         logger.exception("Could not connect to IB Gateway at startup, will retry on first request")
     flatten_task = asyncio.create_task(_flatten_before_close_loop())
     fx_task = asyncio.create_task(_fx_refresh_loop())
+    doji_task = asyncio.create_task(_doji_monitor_loop())
     yield
     flatten_task.cancel()
     fx_task.cancel()
+    doji_task.cancel()
     await ibkr_client.disconnect()
 
 
@@ -79,6 +96,7 @@ EVENT_HANDLERS = {
     "stop_to_breakeven": handle_stop_to_breakeven,
     "level": handle_level,
     "exit_all": handle_exit_all,
+    "doji": handle_doji,
 }
 
 
@@ -95,6 +113,11 @@ async def health():
 @app.post("/webhook")
 async def webhook(request: Request):
     raw_body = await request.body()
+    if not raw_body.lstrip().startswith(b"{"):
+        # The Longterm script's list alert sends its Achtung/HOLD/K=0 texts to
+        # the same webhook as the Doji JSON. They are meant for the phone only.
+        logger.info("Ignoring non-JSON alert text: %.80s", raw_body.decode("utf-8", "replace"))
+        return {"status": "ignored", "reason": "not_json"}
     try:
         alert = BotAlert.model_validate_json(raw_body)
     except Exception as exc:

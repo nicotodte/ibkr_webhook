@@ -3,7 +3,7 @@ import logging
 import time
 from typing import Callable, Optional
 
-from ib_async import IB, Forex, MarketOrder, Order, Position, Stock, StopOrder, Trade
+from ib_async import IB, Forex, LimitOrder, MarketOrder, Order, Position, Stock, StopOrder, Trade
 
 from config import settings
 from spread import QuoteSample
@@ -44,6 +44,8 @@ class IBKRClient:
         self.ib = IB()
         # pair -> (rate, time.monotonic() when it was fetched)
         self._fx_cache: dict[str, tuple[float, float]] = {}
+        # conId -> streaming ticker, for open Doji positions
+        self._streams: dict = {}
 
     async def connect(self):
         if self.ib.isConnected():
@@ -291,6 +293,68 @@ class IBKRClient:
         await self.connect()
         self.ib.cancelOrder(Order(orderId=order_id))
         logger.info("Cancelled order %s", order_id)
+
+    async def place_limit_order(
+        self,
+        contract,
+        action: str,
+        quantity: float,
+        limit_price: float,
+        outside_rth: bool = True,
+        tif: str = "GTC",
+    ) -> Trade:
+        """Limit order that may also fill in the pre-market and after-hours
+        session (outside_rth), where IBKR executes no market or stop orders."""
+        await self.connect()
+        order = LimitOrder(action.upper(), quantity, limit_price)
+        order.tif = tif
+        order.outsideRth = outside_rth
+        trade = self.ib.placeOrder(contract, order)
+        logger.info(
+            "Placed limit order: %s %s x%s @ %s outsideRth=%s (orderId=%s)",
+            action, contract.symbol, quantity, limit_price, outside_rth, trade.order.orderId,
+        )
+        return trade
+
+    async def modify_limit_order(
+        self,
+        contract,
+        order_id: int,
+        action: str,
+        quantity: float,
+        limit_price: float,
+        outside_rth: bool = True,
+        tif: str = "GTC",
+    ) -> Trade:
+        # Same orderId: IBKR changes the working order instead of adding one.
+        await self.connect()
+        order = LimitOrder(action.upper(), quantity, limit_price)
+        order.orderId = order_id
+        order.tif = tif
+        order.outsideRth = outside_rth
+        trade = self.ib.placeOrder(contract, order)
+        logger.info("Modified limit order %s: %s %s x%s @ %s", order_id, action, contract.symbol, quantity, limit_price)
+        return trade
+
+    async def open_order_ids(self) -> set[int]:
+        await self.connect()
+        return {t.order.orderId for t in self.ib.openTrades()}
+
+    async def stream_ticker(self, contract):
+        """Keeps one streaming market data line per contract open, so the
+        Doji monitor can read the latest price every couple of seconds
+        without a new request each time."""
+        await self.connect()
+        key = contract.conId
+        ticker = self._streams.get(key)
+        if ticker is None:
+            ticker = self.ib.reqMktData(contract, "", False, False)
+            self._streams[key] = ticker
+        return ticker
+
+    async def stop_stream(self, contract):
+        if self._streams.pop(contract.conId, None) is not None:
+            self.ib.cancelMktData(contract)
 
 
 ibkr_client = IBKRClient()

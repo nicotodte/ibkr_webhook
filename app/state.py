@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -21,7 +21,31 @@ class TradeState:
     # Position.avgCost folds the commission into the per-share figure, which
     # at small share counts sits far above what was actually paid.
     entry_price: float
-    status: str = "open"  # open | closed
+    status: str = "open"  # open | closing | closed
+    # Everything below is only used by Doji trades (strategy="doji"); the
+    # defaults keep older state files loading.
+    strategy: str = "tf"  # tf | doji
+    tier: str = ""
+    risk_per_share: float = 0.0
+    high_water: float = 0.0
+    trailing: bool = False
+    # Resting take-profit limit orders: [{"order_id", "quantity", "price"}]
+    targets: list = field(default_factory=list)
+    exit_order_id: int = 0
+    exit_price: float = 0.0
+
+
+DOJI_KEY_PREFIX = "DOJI:"
+
+
+def doji_key(symbol: str) -> str:
+    """Doji trades are stored under their own key, so a Doji and a TF trade
+    on the same symbol never overwrite each other's state."""
+    return DOJI_KEY_PREFIX + symbol
+
+
+def store_key(state: TradeState) -> str:
+    return doji_key(state.symbol) if state.strategy == "doji" else state.symbol
 
 
 class PositionStore:
@@ -69,7 +93,7 @@ class PositionStore:
 
     async def all_open(self) -> list[TradeState]:
         async with self._lock:
-            return [t for t in self._trades.values() if t.status == "open"]
+            return [t for t in self._trades.values() if t.status in ("open", "closing")]
 
 
 position_store = PositionStore(settings.state_file)

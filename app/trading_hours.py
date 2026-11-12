@@ -24,6 +24,44 @@ def is_within_trading_hours(now: datetime | None = None) -> bool:
     return start <= local < end
 
 
+EXTENDED_OPEN = time(4, 0)
+EXTENDED_CLOSE = time(20, 0)
+
+
+def _local(now: datetime | None) -> datetime:
+    return (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(settings.trading_timezone))
+
+
+def is_within_doji_entry_hours(now: datetime | None = None) -> bool:
+    local = _local(now)
+    if local.weekday() >= 5:
+        return False
+    tz = local.tzinfo
+    start = datetime.combine(local.date(), MARKET_OPEN, tzinfo=tz) + timedelta(
+        minutes=settings.doji_skip_minutes_after_open
+    )
+    end = datetime.combine(local.date(), MARKET_CLOSE, tzinfo=tz) - timedelta(
+        minutes=settings.doji_stop_minutes_before_close
+    )
+    return start <= local < end
+
+
+def is_regular_session(now: datetime | None = None) -> bool:
+    """Mon-Fri 09:30-16:00 ET, where IBKR's own stop orders run."""
+    local = _local(now)
+    return local.weekday() < 5 and MARKET_OPEN <= local.time() < MARKET_CLOSE
+
+
+def is_extended_session(now: datetime | None = None) -> bool:
+    """Pre-market 04:00-09:30 and after-hours 16:00-20:00 ET, Mon-Fri: US
+    stocks trade, but only limit orders execute."""
+    local = _local(now)
+    if local.weekday() >= 5:
+        return False
+    t = local.time()
+    return EXTENDED_OPEN <= t < MARKET_OPEN or MARKET_CLOSE <= t < EXTENDED_CLOSE
+
+
 def is_within_closing_flatten_window(now: datetime | None = None) -> bool:
     """True during the FLATTEN_BEFORE_CLOSE_MINUTES window right before the
     market close, so open positions still run after the entry window ended."""

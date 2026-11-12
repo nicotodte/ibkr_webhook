@@ -15,16 +15,20 @@ class BotAlert(BaseModel):
       position and moves the stop to new_stop (a price computed by Pine).
     - event="exit_all": trade_id must match. Closes the entire remaining
       position at market and cancels the stop.
+    - event="doji": symbol, trade_id, entry, stop and tier are required.
+      Opens a Doji trade that the bot then manages on its own (quarter
+      exits, stop ladder, trail) -- no further alerts follow.
     """
 
     secret: str
-    event: Literal["entry", "stop_to_breakeven", "level", "exit_all"]
+    event: Literal["entry", "stop_to_breakeven", "level", "exit_all", "doji"]
     symbol: str
     trade_id: str
     entry: Optional[float] = None
     stop: Optional[float] = None
     level: Optional[str] = None
     new_stop: Optional[float] = None
+    tier: Optional[Literal["green", "yellow", "orange"]] = None
 
     @field_validator("symbol")
     @classmethod
