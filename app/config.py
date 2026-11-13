@@ -107,10 +107,10 @@ class Settings(BaseSettings):
     doji_keep_trailing_overnight: bool = True
     doji_extended_exit_below_bid_pct: float = 0.5
     doji_monitor_interval_seconds: float = 2.0
-    # Check Doji entries against IBKR's AvailableFunds (buying power incl.
-    # margin) instead of the cash balance, so several Dojis can be bought at
-    # the same time. TF entries keep the cash check.
-    doji_use_margin: bool = True
+    # true: check Doji entries against IBKR's AvailableFunds (buying power
+    # incl. margin) instead of the cash balance, so several Dojis can be
+    # bought at the same time. Off by default: cash only, like TF entries.
+    doji_use_margin: bool = False
     # Trade journal: one row per Doji alert (signals) and one per closed Doji
     # trade (trades). JOURNAL_TOKEN unlocks /doji/stats and the CSV downloads;
     # empty keeps them switched off.

@@ -74,9 +74,9 @@ solange einer offen ist, wird der andere ignoriert. Doji-Einstiege sind von
 der Eröffnung bis `DOJI_STOP_MINUTES_BEFORE_CLOSE` (15) Minuten vor Schluss
 erlaubt — die 30-Minuten-Sperre nach der Eröffnung gilt für Dojis nicht.
 
-**Kaufkraft:** Doji-Einstiege prüfen `AvailableFunds` (Kaufkraft inkl.
-Margin) statt des Bargelds, solange `DOJI_USE_MARGIN=true` — so können mehrere
-Dojis gleichzeitig gekauft werden. TF-Einstiege prüfen weiter das Bargeld.
+**Kaufkraft:** Doji-Einstiege prüfen wie TF-Einstiege das Bargeld. Mit
+`DOJI_USE_MARGIN=true` prüfen sie stattdessen `AvailableFunds` (Kaufkraft inkl.
+Margin), dann können mehrere Dojis gleichzeitig gekauft werden.
 
 **Trade-Journal:** Jeder Doji-Alarm landet in `/data/doji_signals.csv`
 (gekauft, abgelehnt mit Grund, ignoriert), jeder geschlossene Doji-Trade in
