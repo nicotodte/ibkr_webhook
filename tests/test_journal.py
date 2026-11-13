@@ -92,5 +92,30 @@ class CsvAndStats(unittest.TestCase):
         self.assertEqual(journal.read_rows("/nonexistent/x.csv"), [])
 
 
+class TvExport(unittest.TestCase):
+    trades = [{"closed_utc": "2026-11-13T15:13:24+00:00", "symbol": "CRWD", "tier": "yellow",
+               "trade_id": "1794582721841", "fill_price": "222.54", "initial_stop": "221.9",
+               "avg_exit_price": "221.5342", "r_multiple": "-1.68", "net_pnl_usd": "-83.81", "max_r": "0.58"}]
+    signals = [
+        {"symbol": "CRWD", "tier": "yellow", "trade_id": "1794582721841", "status": "submitted", "reason": ""},
+        {"symbol": "XLK", "tier": "yellow", "trade_id": "1794582848103", "status": "rejected", "reason": "order_not_filled"},
+    ]
+    opened = [{"symbol": "GLW", "tier": "green", "trade_id": "1794585960382", "entry": 110.81, "stop": 110.48}]
+
+    def test_records(self):
+        text = journal.tv_export(self.trades, self.signals, self.opened)
+        recs = text.split(";")
+        self.assertEqual(len(recs), 3)
+        # Doji candle 15:11 UTC: alert fired 15:12:01.8
+        self.assertEqual(recs[0], "T,CRWD,y,1794582660,222.54,221.9,1794582804,221.5342,-1.68,-83.81,0.58")
+        self.assertTrue(recs[1].startswith("S,XLK,y,"))
+        self.assertTrue(recs[1].endswith("rejected:order_not_filled"))
+        self.assertEqual(recs[2], "O,GLW,g,1794585900,110.8100,110.4800")
+
+    def test_cut_from_the_oldest_end(self):
+        text = journal.tv_export(self.trades, self.signals, self.opened, max_chars=40)
+        self.assertTrue(text.startswith("O,GLW"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -90,6 +90,11 @@ USD und in R, Kommission. Mit gesetztem `JOURNAL_TOKEN`:
 - `https://DOMAIN/doji/trades.csv?token=…` und `…/doji/signals.csv?token=…` —
   die Rohdaten zum Herunterladen
 
+- `https://DOMAIN/doji/tv.txt?token=…` — dieselben Trades als kurzer Text für
+  den TradingView-Indikator „Doji Bot Trades“ (lokales Pine-Skript): in dessen
+  Einstellungen einfügen, dann stehen Kauf, Stopp, Ausstieg und Ergebnis jedes
+  Bot-Trades im Chart des Symbols.
+
 Ohne `JOURNAL_TOKEN` sind die Seiten aus; geschrieben wird trotzdem.
 
 Der Listenalarm des Longterm-Skripts schickt auch seine Achtung/HOLD/K=0-

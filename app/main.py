@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from config import settings
 from handlers import (
@@ -143,6 +143,23 @@ async def doji_stats(token: str = ""):
         "signals": {"total": len(signals), "by_outcome": reasons},
         "open_trades": open_trades,
     }
+
+
+@app.get("/doji/tv.txt")
+async def doji_tv(token: str = ""):
+    """Text for the "Doji Bot Trades" indicator in TradingView: copy it into
+    the indicator's settings and every bot trade shows up on its chart."""
+    _check_journal_token(token)
+    open_trades = [
+        {"symbol": t.symbol, "tier": t.tier, "trade_id": t.trade_id, "entry": t.entry_price, "stop": t.stop_price}
+        for t in await position_store.all_open() if t.strategy == "doji"
+    ]
+    text = journal.tv_export(
+        journal.read_all(settings.doji_trades_file),
+        journal.read_all(settings.doji_signals_file),
+        open_trades,
+    )
+    return PlainTextResponse(text or "noch keine Doji-Signale")
 
 
 @app.get("/doji/trades.csv")
