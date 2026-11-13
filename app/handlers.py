@@ -440,6 +440,13 @@ async def handle_doji(alert: BotAlert) -> dict:
     return result
 
 
+def _order_detail(trade) -> str:
+    """Order status plus IBKR's own messages (rejections, precaution
+    warnings) -- the reason a buy did not fill."""
+    msgs = [e.message for e in getattr(trade, "log", []) if getattr(e, "message", "")]
+    return (f"status={trade.orderStatus.status}; " + " | ".join(msgs))[:300]
+
+
 def _r(x):
     return round(x, 3) if isinstance(x, (int, float)) else ""
 
@@ -500,10 +507,22 @@ async def _handle_doji(alert: BotAlert) -> dict:
     opened_at = datetime.now(timezone.utc) - timedelta(seconds=30)
     buy_trade = await ibkr_client.place_market_order(contract, "BUY", quantity)
     try:
-        filled_qty = int(await ibkr_client.wait_for_fill(buy_trade))
+        await ibkr_client.wait_for_fill(buy_trade)
     except Exception as exc:
-        logger.warning("Rejecting Doji for %s: buy order did not fill (%s)", alert.symbol, exc)
-        return {"status": "rejected", "reason": "order_not_filled"}
+        logger.warning("Doji buy for %s not filled in time (%s)", alert.symbol, exc)
+    if buy_trade.orderStatus.status != "Filled":
+        # Never leave a buy working: filling later it would be a position
+        # without any stop that the bot doesn't know about. Cancel the rest,
+        # give IBKR a moment, then protect whatever did fill.
+        await ibkr_client.cancel_order(buy_trade.order.orderId)
+        await asyncio.sleep(2)
+    filled_qty = int(buy_trade.orderStatus.filled or 0)
+    if filled_qty <= 0:
+        detail = _order_detail(buy_trade)
+        logger.warning("Rejecting Doji for %s: buy order did not fill (%s)", alert.symbol, detail)
+        return {"status": "rejected", "reason": "order_not_filled", "detail": detail}
+    if filled_qty < quantity:
+        logger.warning("Doji %s: only %s of %s filled, protecting those", alert.symbol, filled_qty, quantity)
 
     fill = buy_trade.orderStatus.avgFillPrice or quote.ask
     stop = doji.floor_cent(alert.stop)
