@@ -161,6 +161,17 @@ async def doji_signals_csv(token: str = ""):
     return FileResponse(settings.doji_signals_file, media_type="text/csv", filename="doji_signals.csv")
 
 
+_background: set = set()
+
+
+async def _run_doji(alert: BotAlert):
+    try:
+        result = await handle_doji(alert)
+        logger.info("Doji %s finished: %s", alert.symbol, result)
+    except Exception:
+        logger.exception("Handling Doji alert failed: symbol=%s", alert.symbol)
+
+
 @app.post("/webhook")
 async def webhook(request: Request):
     raw_body = await request.body()
@@ -180,6 +191,16 @@ async def webhook(request: Request):
         raise HTTPException(status_code=401, detail="Invalid secret")
 
     logger.info("Alert received: event=%s symbol=%s trade_id=%s", alert.event, alert.symbol, alert.trade_id)
+
+    if alert.event == "doji":
+        # TradingView gives up on a webhook after about 3 seconds and logs a
+        # delivery error; a Doji entry (quote check, buy, waiting for the
+        # fill, placing seven orders) takes longer. So answer at once and run
+        # it in the background. The outcome is in the log and doji_signals.csv.
+        task = asyncio.create_task(_run_doji(alert))
+        _background.add(task)
+        task.add_done_callback(_background.discard)
+        return {"status": "accepted", "symbol": alert.symbol, "event": "doji"}
 
     try:
         return await EVENT_HANDLERS[alert.event](alert)
