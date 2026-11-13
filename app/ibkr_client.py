@@ -260,6 +260,10 @@ class IBKRClient:
 
     async def place_market_order(self, contract, action: str, quantity: float) -> Trade:
         order = MarketOrder(action.upper(), quantity)
+        # Explicit DAY, as the account preset would set anyway: without it
+        # IBKR answers with warning 10349, which ib_async briefly reports as
+        # a cancellation of an order that is in fact working.
+        order.tif = "DAY"
         trade = self.ib.placeOrder(contract, order)
         logger.info("Placed market order: %s %s x%s", action, contract.symbol, quantity)
         return trade
@@ -277,6 +281,9 @@ class IBKRClient:
         while elapsed < timeout:
             if trade.orderStatus.status == "Filled":
                 return trade.orderStatus.filled
+            if trade.orderStatus.status in ("Inactive", "ApiCancelled") and not trade.orderStatus.filled:
+                # Rejected by IBKR (e.g. no trading permission): no point waiting.
+                break
             await asyncio.sleep(step)
             elapsed += step
 
