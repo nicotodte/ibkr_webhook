@@ -94,7 +94,10 @@ async def _pretrade_checks(
 
     # Without spread checks the buy can fill well above the alert price;
     # sizing off the ask keeps the dollar risk at the budget.
-    size_entry = max(alert.entry, ask) if skip_spread_checks else alert.entry
+    # Sized off the ask either way: above the alert price it keeps the dollar
+    # risk at the budget, below it the position isn't too small (SNDK 13.11.:
+    # 9 shares for 9.70 USD of risk instead of 23 for 25 USD).
+    size_entry = ask if skip_spread_checks else alert.entry
     try:
         quantity = calculate_quantity(size_entry, alert.stop, fx_rate, risk_usd)
     except SizingError as exc:
@@ -587,6 +590,11 @@ async def _handle_doji(alert: BotAlert) -> dict:
         "symbol": alert.symbol,
         "tier": alert.tier,
         "quantity": filled_qty,
+        "bid": quote.bid,
+        "ask": quote.ask,
+        "spread_pct": quote.spread_pct,
+        "spread_pct_of_risk": quote.spread_pct_of_risk,
+        "slippage_pct_of_risk": quote.slippage_pct_of_risk,
         "requested_quantity": quantity,
         "risk_per_share": round(risk, 4),
         "targets": targets,
