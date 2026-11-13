@@ -39,6 +39,16 @@ def _has_quote(ticker) -> bool:
     return bool(ticker.bid and ticker.ask and ticker.bid > 0 and ticker.ask > 0)
 
 
+def _set_oca(order, group: str):
+    """Puts the order in an OCA group with type 2: when one order of the
+    group fills (also partly), IBKR reduces the others by the same number of
+    shares, with overfill protection. A Doji quarter's stop and target form
+    such a pair, so the stops never cover more shares than are still held."""
+    if group:
+        order.ocaGroup = group
+        order.ocaType = 2
+
+
 class IBKRClient:
     def __init__(self):
         self.ib = IB()
@@ -286,13 +296,14 @@ class IBKRClient:
         )
 
     async def place_stop_order(
-        self, contract, action: str, quantity: float, stop_price: float
+        self, contract, action: str, quantity: float, stop_price: float, oca_group: str = ""
     ) -> Trade:
         order = StopOrder(action.upper(), quantity, stop_price)
         # Without an explicit TIF the account's order preset fills in DAY
         # (IBKR says so via error 10349), which would quietly drop the
         # protective stop at the close while the position stays open.
         order.tif = "GTC"
+        _set_oca(order, oca_group)
         trade = self.ib.placeOrder(contract, order)
         logger.info(
             "Placed stop order: %s %s x%s @ %s (orderId=%s)",
@@ -334,6 +345,7 @@ class IBKRClient:
         limit_price: float,
         outside_rth: bool = True,
         tif: str = "GTC",
+        oca_group: str = "",
     ) -> Trade:
         """Limit order that may also fill in the pre-market and after-hours
         session (outside_rth), where IBKR executes no market or stop orders."""
@@ -341,6 +353,7 @@ class IBKRClient:
         order = LimitOrder(action.upper(), quantity, limit_price)
         order.tif = tif
         order.outsideRth = outside_rth
+        _set_oca(order, oca_group)
         trade = self.ib.placeOrder(contract, order)
         logger.info(
             "Placed limit order: %s %s x%s @ %s outsideRth=%s (orderId=%s)",
@@ -367,6 +380,21 @@ class IBKRClient:
         trade = self.ib.placeOrder(contract, order)
         logger.info("Modified limit order %s: %s %s x%s @ %s", order_id, action, contract.symbol, quantity, limit_price)
         return trade
+
+    async def change_order_price(self, order_id: int, price: float, field: str = "auxPrice") -> bool:
+        """Moves the price of a working order (auxPrice = stop trigger,
+        lmtPrice = limit) and leaves everything else as it is -- quantity,
+        OCA group, TIF. Works on IBKR's own copy of the order, so an OCA
+        stop keeps its link to its target. Returns False if the order is no
+        longer working (filled or cancelled)."""
+        await self.connect()
+        for trade in self.ib.openTrades():
+            if trade.order.orderId == order_id:
+                setattr(trade.order, field, price)
+                self.ib.placeOrder(trade.contract, trade.order)
+                logger.info("Moved order %s %s to %s", order_id, field, price)
+                return True
+        return False
 
     async def open_order_ids(self) -> set[int]:
         await self.connect()

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -329,6 +330,12 @@ async def flatten_all_before_close() -> dict:
 
             for order_id in _order_ids(state):
                 await ibkr_client.cancel_order(order_id)
+            if state.strategy == "doji" and _order_ids(state):
+                # Let the cancels land, then sell only what is still held: a
+                # target or stop filling in between must not be sold twice.
+                await asyncio.sleep(1.5)
+                pos = await ibkr_client.get_position(state.symbol)
+                qty = int(pos.position) if pos else 0
             contract = None
             if qty > 0:
                 contract = await ibkr_client.qualify_stock(
@@ -357,6 +364,7 @@ async def flatten_all_before_close() -> dict:
 def _order_ids(state: TradeState) -> list[int]:
     """Every order the bot may still have resting for this trade."""
     ids = [state.stop_order_id] + [t["order_id"] for t in state.targets]
+    ids += [t.get("stop_order_id", 0) for t in state.targets]
     if state.exit_order_id:
         ids.append(state.exit_order_id)
     return [i for i in ids if i]
@@ -481,19 +489,33 @@ async def _handle_doji(alert: BotAlert) -> dict:
     fill = buy_trade.orderStatus.avgFillPrice or quote.ask
     stop = doji.floor_cent(alert.stop)
     risk = fill - stop
-    stop_trade = await ibkr_client.place_stop_order(contract, "SELL", filled_qty, stop)
-
+    # Every quarter with a target gets its own stop, and the two are an OCA
+    # pair: when the target fills, IBKR itself cancels (or, on a partial fill,
+    # shrinks) that quarter's stop -- and the other way round. So the stops
+    # never cover more shares than are still held, with no gap in between
+    # that the bot would have to close. The last quarter's stop stands alone
+    # and is the one that trails.
     targets = []
     if risk > 0:
         sizes = doji.split_quarters(filled_qty)
-        for size, price in zip(sizes[:3], doji.target_prices(fill, risk)):
-            if size <= 0:
-                continue
-            tp = await ibkr_client.place_limit_order(contract, "SELL", size, price)
-            targets.append({"order_id": tp.order.orderId, "quantity": size, "price": price})
+        prices = doji.target_prices(fill, risk)
     else:
         # Filled at or below the stop: the stop order takes it straight out.
         logger.warning("Doji %s filled at %.2f, not above its stop %.2f", alert.symbol, fill, stop)
+        sizes, prices = [0, 0, 0, filled_qty], []
+    for i, (size, price) in enumerate(zip(sizes[:3], prices), start=1):
+        if size <= 0:
+            continue
+        group = f"doji-{alert.symbol}-{alert.trade_id}-{i}"
+        st = await ibkr_client.place_stop_order(contract, "SELL", size, stop, oca_group=group)
+        tp = await ibkr_client.place_limit_order(contract, "SELL", size, price, oca_group=group)
+        targets.append({
+            "order_id": tp.order.orderId,
+            "stop_order_id": st.order.orderId,
+            "quantity": size,
+            "price": price,
+        })
+    stop_trade = await ibkr_client.place_stop_order(contract, "SELL", sizes[3], stop)
 
     state = TradeState(
         symbol=alert.symbol,
@@ -581,9 +603,14 @@ async def _manage_doji(state: TradeState):
     )
     changed = False
 
-    # Targets that are no longer open have filled (or were cancelled).
+    # A quarter is done once neither its target nor its stop is working any
+    # more (target filled -> IBKR cancelled the stop, or the other way round).
+    # While its stop still works it stays tracked, so the ladder moves it.
     open_ids = await ibkr_client.open_order_ids()
-    still_open = [t for t in state.targets if t["order_id"] in open_ids]
+    still_open = [
+        t for t in state.targets
+        if t["order_id"] in open_ids or t.get("stop_order_id") in open_ids
+    ]
     if len(still_open) != len(state.targets):
         state.targets = still_open
         changed = True
@@ -619,18 +646,21 @@ async def _manage_doji(state: TradeState):
         changed = True
         logger.info("Doji %s reached 10 R: trailing the rest", state.symbol)
 
-    if new_stop > state.stop_price or qty != state.quantity:
-        await ibkr_client.modify_stop_order(
-            contract, state.stop_order_id, "SELL", qty, max(new_stop, state.stop_price)
+    if new_stop > state.stop_price:
+        # Only the price moves. Each stop keeps the size IBKR manages for it
+        # through its OCA pair, so the bot never sets a stop size itself.
+        stop_ids = [state.stop_order_id] + [t["stop_order_id"] for t in state.targets if t.get("stop_order_id")]
+        for order_id in stop_ids:
+            await ibkr_client.change_order_price(order_id, new_stop)
+        logger.info(
+            "Doji %s stop %.2f -> %.2f (high %.2f, %.1f R)",
+            state.symbol, state.stop_price, new_stop, state.high_water,
+            (state.high_water - state.entry_price) / state.risk_per_share
+            if state.risk_per_share else 0.0,
         )
-        if new_stop > state.stop_price:
-            logger.info(
-                "Doji %s stop %.2f -> %.2f (high %.2f, %.1f R)",
-                state.symbol, state.stop_price, new_stop, state.high_water,
-                (state.high_water - state.entry_price) / state.risk_per_share
-                if state.risk_per_share else 0.0,
-            )
-            state.stop_price = new_stop
+        state.stop_price = new_stop
+        changed = True
+    if qty != state.quantity:
         state.quantity = qty
         changed = True
 
@@ -645,7 +675,9 @@ async def _manage_doji(state: TradeState):
         state.targets = []
         state.stop_order_id = 0
         state.status = "closing"
-        await _work_doji_exit(state, contract, qty, bid, set())
+        # The sell goes out on the next pass, once the cancels are through
+        # and the position and fills are read again -- a target that fills in
+        # the meantime must not be sold a second time.
         changed = True
 
     if changed:

@@ -24,6 +24,17 @@ class SplitQuarters(unittest.TestCase):
             self.assertEqual(sum(doji.split_quarters(q)), q)
 
 
+class StopQuantities(unittest.TestCase):
+    def test_stops_never_exceed_the_position(self):
+        for q in range(1, 400):
+            self.assertEqual(sum(doji.stop_quantities(q)), q)
+
+    def test_one_stop_per_target_plus_rest(self):
+        self.assertEqual(doji.stop_quantities(13), [3, 3, 3, 4])
+        self.assertEqual(doji.stop_quantities(3), [1, 1, 1])
+        self.assertEqual(doji.stop_quantities(1), [1])
+
+
 class Targets(unittest.TestCase):
     def test_targets_at_2_5_10_r_rounded_up(self):
         # NVDA 10.11. 16:55: fill 167.79, stop 167.61 -> R 0.18

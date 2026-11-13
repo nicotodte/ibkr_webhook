@@ -33,6 +33,13 @@ def split_quarters(quantity: int) -> list[int]:
     return {1: [0, 0, 0, 1], 2: [1, 0, 0, 1], 3: [1, 1, 0, 1]}[quantity]
 
 
+def stop_quantities(quantity: int) -> list[int]:
+    """Sizes of the stop orders: one per quarter that has a target (its OCA
+    partner) plus the trailing rest. They always add up to the position."""
+    sizes = split_quarters(quantity)
+    return [q for q in sizes[:3] if q > 0] + [sizes[3]]
+
+
 def floor_cent(price: float) -> float:
     # Sell stops and exit limits round down: never above the intended price.
     return math.floor(price * 100 + 1e-9) / 100
