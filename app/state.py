@@ -33,6 +33,13 @@ class TradeState:
     targets: list = field(default_factory=list)
     exit_order_id: int = 0
     exit_price: float = 0.0
+    # Journal data (Doji trades)
+    opened_at: str = ""
+    alert_entry: float = 0.0
+    alert_stop: float = 0.0
+    initial_quantity: int = 0
+    low_water: float = 0.0
+    fills: list = field(default_factory=list)
 
 
 DOJI_KEY_PREFIX = "DOJI:"

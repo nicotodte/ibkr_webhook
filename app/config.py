@@ -107,6 +107,16 @@ class Settings(BaseSettings):
     doji_keep_trailing_overnight: bool = True
     doji_extended_exit_below_bid_pct: float = 0.5
     doji_monitor_interval_seconds: float = 2.0
+    # Check Doji entries against IBKR's AvailableFunds (buying power incl.
+    # margin) instead of the cash balance, so several Dojis can be bought at
+    # the same time. TF entries keep the cash check.
+    doji_use_margin: bool = True
+    # Trade journal: one row per Doji alert (signals) and one per closed Doji
+    # trade (trades). JOURNAL_TOKEN unlocks /doji/stats and the CSV downloads;
+    # empty keeps them switched off.
+    doji_signals_file: str = "/data/doji_signals.csv"
+    doji_trades_file: str = "/data/doji_trades.csv"
+    journal_token: str = ""
 
     # Where open-position state (symbol -> trade_id/qty/stop order) is
     # persisted so it survives a webhook container restart.

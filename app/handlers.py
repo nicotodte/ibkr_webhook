@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from config import settings
@@ -8,6 +9,7 @@ from sizing import SizingError, calculate_quantity
 from spread import assess_entry_quotes
 from state import TradeState, doji_key, position_store, store_key
 import doji
+import journal
 from trading_hours import (
     is_extended_session,
     is_regular_session,
@@ -22,6 +24,7 @@ async def _pretrade_checks(
     alert: BotAlert,
     risk_usd: Optional[float] = None,
     max_slippage_pct_of_risk: Optional[float] = None,
+    use_margin: bool = False,
 ):
     """Quote, FX, sizing and cash checks shared by TF and Doji entries.
 
@@ -93,16 +96,20 @@ async def _pretrade_checks(
         return {"status": "rejected", "reason": str(exc)}
 
     notional_eur = (quantity * ask) / fx_rate
+    funds_label = "available funds incl. margin" if use_margin else "cash"
     try:
-        available_cash_eur = await ibkr_client.get_available_cash_base_currency()
+        if use_margin:
+            available_cash_eur = await ibkr_client.get_available_funds_base_currency()
+        else:
+            available_cash_eur = await ibkr_client.get_available_cash_base_currency()
     except Exception as exc:
-        logger.warning("Rejecting entry for %s: no cash balance (%s)", alert.symbol, exc)
+        logger.warning("Rejecting entry for %s: no %s balance (%s)", alert.symbol, funds_label, exc)
         return {"status": "rejected", "reason": "no_cash_balance"}
 
     if notional_eur > available_cash_eur:
         logger.info(
-            "Rejecting entry for %s: needs ~EUR %.2f, only EUR %.2f cash available",
-            alert.symbol, notional_eur, available_cash_eur,
+            "Rejecting entry for %s: needs ~EUR %.2f, only EUR %.2f %s",
+            alert.symbol, notional_eur, available_cash_eur, funds_label,
         )
         return {"status": "rejected", "reason": "insufficient_cash"}
 
@@ -327,9 +334,16 @@ async def flatten_all_before_close() -> dict:
                 contract = await ibkr_client.qualify_stock(
                     state.symbol, settings.default_exchange, settings.default_currency
                 )
-                await ibkr_client.place_market_order(contract, "SELL", qty)
+                sell = await ibkr_client.place_market_order(contract, "SELL", qty)
+                if state.strategy == "doji":
+                    try:
+                        await ibkr_client.wait_for_fill(sell)
+                    except Exception:
+                        logger.warning("Flatten sell for %s not confirmed for the journal", state.symbol)
             if state.strategy == "doji":
                 await _stop_doji_stream(state.symbol)
+                _sync_fills(state)
+                _journal_close(state, "flatten_before_close")
 
             await position_store.delete(store_key(state))
             logger.info("Flattened %s before close: sold %s", state.symbol, qty)
@@ -389,6 +403,25 @@ async def _stop_doji_stream(symbol: str):
 
 
 async def handle_doji(alert: BotAlert) -> dict:
+    result = await _handle_doji(alert)
+    try:
+        journal.append_row(settings.doji_signals_file, journal.SIGNAL_FIELDS, {
+            "time_utc": journal.now_utc(),
+            "symbol": alert.symbol,
+            "tier": alert.tier or "",
+            "trade_id": alert.trade_id,
+            "alert_entry": alert.entry,
+            "alert_stop": alert.stop,
+            "status": result.get("status", ""),
+            "reason": result.get("reason", ""),
+            "quantity": result.get("quantity", ""),
+        })
+    except Exception:
+        logger.exception("Could not write the Doji signal journal")
+    return result
+
+
+async def _handle_doji(alert: BotAlert) -> dict:
     if not settings.doji_enabled:
         return {"status": "ignored", "reason": "doji_disabled"}
     if alert.entry is None or alert.stop is None or alert.tier is None:
@@ -407,6 +440,8 @@ async def handle_doji(alert: BotAlert) -> dict:
         logger.info("Clearing stale Doji state for %s: IBKR reports no position", alert.symbol)
         for order_id in _order_ids(existing):
             await ibkr_client.cancel_order(order_id)
+        _sync_fills(existing)
+        _journal_close(existing, "closed_while_bot_was_down")
         await position_store.delete(key)
 
     tf = await position_store.get(alert.symbol)
@@ -419,7 +454,9 @@ async def handle_doji(alert: BotAlert) -> dict:
         return {"status": "ignored", "reason": "outside_trading_hours"}
 
     risk_usd = _doji_risk(alert.tier)
-    checked = await _pretrade_checks(alert, risk_usd, settings.doji_max_entry_slippage_pct_of_risk)
+    checked = await _pretrade_checks(
+        alert, risk_usd, settings.doji_max_entry_slippage_pct_of_risk, settings.doji_use_margin
+    )
     if isinstance(checked, dict):
         return checked
     contract, quantity, quote, fx_rate, available_cash_eur = checked
@@ -431,6 +468,9 @@ async def handle_doji(alert: BotAlert) -> dict:
     if settings.dry_run:
         return {"status": "dry_run", "symbol": alert.symbol, "tier": alert.tier, "quantity": quantity}
 
+    # A little before the order, so the buy execution falls inside the
+    # journal window even with a few seconds of clock difference to IBKR.
+    opened_at = datetime.now(timezone.utc) - timedelta(seconds=30)
     buy_trade = await ibkr_client.place_market_order(contract, "BUY", quantity)
     try:
         filled_qty = int(await ibkr_client.wait_for_fill(buy_trade))
@@ -468,7 +508,13 @@ async def handle_doji(alert: BotAlert) -> dict:
         risk_per_share=max(risk, 0.0),
         high_water=fill,
         targets=targets,
+        opened_at=opened_at.isoformat(),
+        alert_entry=alert.entry,
+        alert_stop=alert.stop,
+        initial_quantity=filled_qty,
+        low_water=fill,
     )
+    _sync_fills(state)
     await position_store.set(key, state)
     await ibkr_client.stream_ticker(contract)
     logger.info(
@@ -519,6 +565,12 @@ async def _manage_doji(state: TradeState):
         for order_id in _order_ids(state):
             await ibkr_client.cancel_order(order_id)
         await _stop_doji_stream(state.symbol)
+        _sync_fills(state)
+        _journal_close(
+            state,
+            "extended_hours_exit" if state.status == "closing"
+            else "trail" if state.trailing else "stop_or_targets",
+        )
         await position_store.delete(key)
         logger.info("Doji %s closed (trade_id=%s)", state.symbol, state.trade_id)
         return
@@ -542,6 +594,11 @@ async def _manage_doji(state: TradeState):
     price = last or bid
     if price > state.high_water:
         state.high_water = price
+        changed = True
+    if price and (not state.low_water or price < state.low_water):
+        state.low_water = price
+        changed = True
+    if _sync_fills(state):
         changed = True
 
     if state.status == "closing":
@@ -606,6 +663,11 @@ async def _work_doji_exit(state: TradeState, contract, qty: int, bid: float, ope
     a limit outside them; overnight nothing trades.
     """
     below = settings.doji_extended_exit_below_bid_pct
+    if state.initial_quantity:
+        # IBKR's position can lag a fill by a moment; the executions don't.
+        qty = min(qty, int(state.initial_quantity - journal.sold_quantity(state.fills)))
+        if qty <= 0:
+            return
     if state.exit_order_id and state.exit_order_id in open_ids:
         if is_extended_session() and bid:
             limit = doji.extended_hours_exit_limit(bid, below)
@@ -626,3 +688,46 @@ async def _work_doji_exit(state: TradeState, contract, qty: int, bid: float, ope
         trade = await ibkr_client.place_limit_order(contract, "SELL", qty, limit, tif="DAY")
         state.exit_order_id = trade.order.orderId
         state.exit_price = limit
+
+
+def _sync_fills(state: TradeState) -> bool:
+    """Pulls this trade's executions into state.fills (journal and exit
+    sizing). Never raises: the journal must not get in the way of trading."""
+    if not state.opened_at:
+        return False
+    try:
+        since = datetime.fromisoformat(state.opened_at)
+        return journal.merge_fills(state.fills, ibkr_client.fills_for(state.symbol, since))
+    except Exception:
+        logger.warning("Could not read fills for %s", state.symbol, exc_info=True)
+        return False
+
+
+def _journal_close(state: TradeState, reason: str):
+    if not state.opened_at:
+        return
+    try:
+        row = journal.trade_row(
+            symbol=state.symbol,
+            tier=state.tier,
+            trade_id=state.trade_id,
+            opened_utc=state.opened_at,
+            alert_entry=state.alert_entry,
+            alert_stop=state.alert_stop,
+            fill_price=state.entry_price,
+            initial_stop=state.entry_price - state.risk_per_share,
+            quantity=state.initial_quantity,
+            planned_risk_usd=_doji_risk(state.tier) if state.tier else 0.0,
+            high=state.high_water,
+            low=state.low_water,
+            reached_trail=state.trailing,
+            exit_reason=reason,
+            fills=state.fills,
+        )
+        journal.append_row(settings.doji_trades_file, journal.TRADE_FIELDS, row)
+        logger.info(
+            "Doji journal %s %s: net %.2f USD, %s R (%s)",
+            state.symbol, state.tier, row["net_pnl_usd"], row["r_multiple"], reason,
+        )
+    except Exception:
+        logger.exception("Could not write the Doji trade journal for %s", state.symbol)

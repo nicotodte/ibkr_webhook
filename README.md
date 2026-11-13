@@ -74,6 +74,23 @@ solange einer offen ist, wird der andere ignoriert. Doji-Einstiege sind von
 der Eröffnung bis `DOJI_STOP_MINUTES_BEFORE_CLOSE` (15) Minuten vor Schluss
 erlaubt — die 30-Minuten-Sperre nach der Eröffnung gilt für Dojis nicht.
 
+**Kaufkraft:** Doji-Einstiege prüfen `AvailableFunds` (Kaufkraft inkl.
+Margin) statt des Bargelds, solange `DOJI_USE_MARGIN=true` — so können mehrere
+Dojis gleichzeitig gekauft werden. TF-Einstiege prüfen weiter das Bargeld.
+
+**Trade-Journal:** Jeder Doji-Alarm landet in `/data/doji_signals.csv`
+(gekauft, abgelehnt mit Grund, ignoriert), jeder geschlossene Doji-Trade in
+`/data/doji_trades.csv` mit den echten Ausführungen: Kaufkurs, R, Höchst- und
+Tiefstkurs (max/min R), Ausstiegsgrund, Durchschnitts-Verkaufskurs, Gewinn in
+USD und in R, Kommission. Mit gesetztem `JOURNAL_TOKEN`:
+
+- `https://DOMAIN/doji/stats?token=…` — Gewinnquote, Gewinn und R je Farbe,
+  Ergebnisse der Alarme, offene Doji-Trades
+- `https://DOMAIN/doji/trades.csv?token=…` und `…/doji/signals.csv?token=…` —
+  die Rohdaten zum Herunterladen
+
+Ohne `JOURNAL_TOKEN` sind die Seiten aus; geschrieben wird trotzdem.
+
 Der Listenalarm des Longterm-Skripts schickt auch seine Achtung/HOLD/K=0-
 Texte an den Webhook; alles, was nicht mit `{` beginnt, ignoriert der Bot.
 

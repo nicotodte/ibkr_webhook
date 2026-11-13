@@ -1,10 +1,12 @@
 import asyncio
 import hmac
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
 
 from config import settings
 from handlers import (
@@ -16,8 +18,10 @@ from handlers import (
     handle_stop_to_breakeven,
     manage_doji_positions,
 )
+import journal
 from ibkr_client import ibkr_client
 from models import BotAlert
+from state import position_store
 from trading_hours import is_within_closing_flatten_window
 
 logging.basicConfig(
@@ -108,6 +112,53 @@ async def health():
         except Exception:
             logger.warning("Health check: IB Gateway still unreachable", exc_info=True)
     return {"status": "ok", "ib_connected": ibkr_client.ib.isConnected()}
+
+
+def _check_journal_token(token: str):
+    # Off unless JOURNAL_TOKEN is set. A separate token from WEBHOOK_SECRET:
+    # it only reads results and ends up in browser history.
+    if not settings.journal_token:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not hmac.compare_digest(token or "", settings.journal_token):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+@app.get("/doji/stats")
+async def doji_stats(token: str = ""):
+    """Win rate, P&L and R of the closed Doji trades, per colour and total."""
+    _check_journal_token(token)
+    trades = journal.read_rows(settings.doji_trades_file)
+    signals = journal.read_rows(settings.doji_signals_file)
+    reasons: dict[str, int] = {}
+    for row in signals:
+        key = row.get("status", "") + (": " + row["reason"] if row.get("reason") else "")
+        reasons[key] = reasons.get(key, 0) + 1
+    open_trades = [
+        {"symbol": t.symbol, "tier": t.tier, "entry": t.entry_price, "stop": t.stop_price,
+         "high": t.high_water, "trailing": t.trailing}
+        for t in await position_store.all_open() if t.strategy == "doji"
+    ]
+    return {
+        "closed_trades": journal.stats(trades),
+        "signals": {"total": len(signals), "by_outcome": reasons},
+        "open_trades": open_trades,
+    }
+
+
+@app.get("/doji/trades.csv")
+async def doji_trades_csv(token: str = ""):
+    _check_journal_token(token)
+    if not os.path.exists(settings.doji_trades_file):
+        raise HTTPException(status_code=404, detail="No Doji trades recorded yet")
+    return FileResponse(settings.doji_trades_file, media_type="text/csv", filename="doji_trades.csv")
+
+
+@app.get("/doji/signals.csv")
+async def doji_signals_csv(token: str = ""):
+    _check_journal_token(token)
+    if not os.path.exists(settings.doji_signals_file):
+        raise HTTPException(status_code=404, detail="No Doji signals recorded yet")
+    return FileResponse(settings.doji_signals_file, media_type="text/csv", filename="doji_signals.csv")
 
 
 @app.post("/webhook")

@@ -179,6 +179,16 @@ class IBKRClient:
             self.ib.cancelMktData(contract)
 
     async def get_available_cash_base_currency(self) -> float:
+        return await self._account_value_base_currency("TotalCashValue")
+
+    async def get_available_funds_base_currency(self) -> float:
+        """Buying power including margin (IBKR's AvailableFunds), in the
+        account's base currency. Used for Doji entries so several can be
+        bought at once when the cash alone wouldn't cover them; IBKR still
+        rejects an order the margin can't carry."""
+        return await self._account_value_base_currency("AvailableFunds")
+
+    async def _account_value_base_currency(self, tag: str) -> float:
         # reqAccountSummary reports every value already converted into the
         # account's base currency, and the row's currency field names that
         # base currency (e.g. "EUR"). It is never the literal "BASE" --
@@ -188,26 +198,48 @@ class IBKRClient:
         # accountSummaryEnd on its first call and caches the result, so a
         # retry loop would just re-read the same dict.
         await self.connect()
-        cash_by_currency = {
+        by_currency = {
             v.currency: float(v.value)
             for v in await self.ib.accountSummaryAsync()
-            if v.tag == "TotalCashValue"
+            if v.tag == tag
         }
-        if not cash_by_currency:
-            raise RuntimeError("No TotalCashValue row in account summary")
+        if not by_currency:
+            raise RuntimeError(f"No {tag} row in account summary")
 
         for currency in ("BASE", settings.account_currency):
-            if currency in cash_by_currency:
-                return cash_by_currency[currency]
+            if currency in by_currency:
+                return by_currency[currency]
 
         # Refuse to reinterpret a foreign-currency figure as base currency:
         # that would silently mis-size every position.
         raise RuntimeError(
-            f"Account summary reports TotalCashValue only in "
-            f"{sorted(cash_by_currency)}, not in the configured "
+            f"Account summary reports {tag} only in "
+            f"{sorted(by_currency)}, not in the configured "
             f"ACCOUNT_CURRENCY={settings.account_currency} -- set "
             f"ACCOUNT_CURRENCY to the account's actual base currency"
         )
+
+    def fills_for(self, symbol: str, since) -> list[dict]:
+        """Executions of this symbol since `since` (aware datetime), from the
+        fills ib_async has collected this session (it loads the day's
+        executions on connect). Feeds the Doji trade journal."""
+        out = []
+        for f in self.ib.fills():
+            if f.contract.symbol != symbol or f.execution.time < since:
+                continue
+            commission = 0.0
+            report = f.commissionReport
+            if report and report.commission and report.commission < 1e9:
+                commission = float(report.commission)
+            out.append({
+                "exec_id": f.execution.execId,
+                "side": f.execution.side,
+                "qty": float(f.execution.shares),
+                "price": float(f.execution.price),
+                "time": f.execution.time.isoformat(),
+                "commission": commission,
+            })
+        return out
 
     async def get_position(self, symbol: str) -> Optional[Position]:
         await self.connect()
