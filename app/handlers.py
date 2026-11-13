@@ -55,10 +55,10 @@ async def _pretrade_checks(
         )
     except DelayedMarketDataError as exc:
         logger.warning("Rejecting entry for %s: delayed/frozen market data (%s)", alert.symbol, exc)
-        return {"status": "rejected", "reason": "delayed_market_data"}
+        return {"status": "rejected", "reason": "delayed_market_data", "detail": str(exc)[:300]}
     except Exception as exc:
         logger.warning("Rejecting entry for %s: no live quote (%s)", alert.symbol, exc)
-        return {"status": "rejected", "reason": "no_market_data"}
+        return {"status": "rejected", "reason": "no_market_data", "detail": str(exc)[:300]}
 
     quote = assess(samples)
     logger.info(
@@ -423,10 +423,20 @@ async def handle_doji(alert: BotAlert) -> dict:
             "status": result.get("status", ""),
             "reason": result.get("reason", ""),
             "quantity": result.get("quantity", ""),
+            "bid": result.get("bid", ""),
+            "ask": result.get("ask", ""),
+            "spread_pct": _r(result.get("spread_pct")),
+            "spread_pct_of_risk": _r(result.get("spread_pct_of_risk")),
+            "slippage_pct_of_risk": _r(result.get("slippage_pct_of_risk")),
+            "detail": result.get("detail", ""),
         })
     except Exception:
         logger.exception("Could not write the Doji signal journal")
     return result
+
+
+def _r(x):
+    return round(x, 3) if isinstance(x, (int, float)) else ""
 
 
 async def _handle_doji(alert: BotAlert) -> dict:

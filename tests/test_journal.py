@@ -80,6 +80,14 @@ class CsvAndStats(unittest.TestCase):
             self.assertEqual(s["orange"]["trades"], 2)
             self.assertEqual(s["green"]["avg_r"], 5.4)
 
+    def test_changed_columns_start_a_new_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "s.csv")
+            journal.append_row(path, ["a", "b"], {"a": 1, "b": 2})
+            journal.append_row(path, ["a", "b", "c"], {"a": 1, "b": 2, "c": 3})
+            self.assertEqual(journal.read_rows(path), [{"a": "1", "b": "2", "c": "3"}])
+            self.assertEqual(len([f for f in os.listdir(d) if f.endswith(".old")]), 1)
+
     def test_missing_file(self):
         self.assertEqual(journal.read_rows("/nonexistent/x.csv"), [])
 

@@ -15,7 +15,8 @@ from typing import Optional
 
 SIGNAL_FIELDS = [
     "time_utc", "symbol", "tier", "trade_id", "alert_entry", "alert_stop",
-    "status", "reason", "quantity",
+    "status", "reason", "quantity", "bid", "ask", "spread_pct",
+    "spread_pct_of_risk", "slippage_pct_of_risk", "detail",
 ]
 
 TRADE_FIELDS = [
@@ -33,6 +34,14 @@ def now_utc() -> str:
 
 def append_row(path: str, fields: list, row: dict) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        with open(path, newline="", encoding="utf-8") as fh:
+            header = next(csv.reader(fh), [])
+        if header != fields:
+            # Columns changed with an update: keep the old file aside rather
+            # than appending rows that no longer match its header.
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+            os.replace(path, f"{path}.{stamp}.old")
     new = not os.path.exists(path) or os.path.getsize(path) == 0
     with open(path, "a", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
