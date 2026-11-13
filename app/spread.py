@@ -53,7 +53,8 @@ def assess_entry_quotes(
     - if the ask has run above the TradingView entry by more than the
       allowed share of the risk, the setup is no longer the one that fired.
 
-    A limit of 0 disables the matching percent-of-risk check.
+    A limit of 0 disables the matching check. With all three at 0 only one
+    rule is left: the ask must still be above the stop.
     """
     valid = [s for s in samples if s.bid > 0 and s.ask >= s.bid]
     if not valid:
@@ -97,7 +98,7 @@ def assess_entry_quotes(
     def finish(reason):
         return result(reason, risk_per_share, spread_pct_of_risk, slippage_pct_of_risk)
 
-    if spread_pct > max_spread_pct:
+    if max_spread_pct > 0 and spread_pct > max_spread_pct:
         return finish("spread_too_wide")
     if max_spread_pct_of_risk > 0 and spread_pct_of_risk > max_spread_pct_of_risk:
         return finish("spread_too_wide_for_risk")

@@ -26,6 +26,7 @@ async def _pretrade_checks(
     risk_usd: Optional[float] = None,
     max_slippage_pct_of_risk: Optional[float] = None,
     use_margin: bool = False,
+    skip_spread_checks: bool = False,
 ):
     """Quote, FX, sizing and cash checks shared by TF and Doji entries.
 
@@ -41,9 +42,10 @@ async def _pretrade_checks(
             samples,
             alert.entry,
             alert.stop,
-            settings.max_spread_pct,
-            settings.max_spread_pct_of_risk,
-            settings.max_entry_slippage_pct_of_risk
+            0.0 if skip_spread_checks else settings.max_spread_pct,
+            0.0 if skip_spread_checks else settings.max_spread_pct_of_risk,
+            0.0 if skip_spread_checks
+            else settings.max_entry_slippage_pct_of_risk
             if max_slippage_pct_of_risk is None
             else max_slippage_pct_of_risk,
         )
@@ -90,8 +92,11 @@ async def _pretrade_checks(
         logger.warning("Rejecting entry for %s: no FX rate (%s)", alert.symbol, exc)
         return {"status": "rejected", "reason": "no_fx_rate"}
 
+    # Without spread checks the buy can fill well above the alert price;
+    # sizing off the ask keeps the dollar risk at the budget.
+    size_entry = max(alert.entry, ask) if skip_spread_checks else alert.entry
     try:
-        quantity = calculate_quantity(alert.entry, alert.stop, fx_rate, risk_usd)
+        quantity = calculate_quantity(size_entry, alert.stop, fx_rate, risk_usd)
     except SizingError as exc:
         logger.warning("Sizing rejected entry for %s: %s", alert.symbol, exc)
         return {"status": "rejected", "reason": str(exc)}
@@ -473,7 +478,11 @@ async def _handle_doji(alert: BotAlert) -> dict:
 
     risk_usd = _doji_risk(alert.tier)
     checked = await _pretrade_checks(
-        alert, risk_usd, settings.doji_max_entry_slippage_pct_of_risk, settings.doji_use_margin
+        alert,
+        risk_usd,
+        settings.doji_max_entry_slippage_pct_of_risk,
+        settings.doji_use_margin,
+        settings.doji_skip_spread_checks,
     )
     if isinstance(checked, dict):
         return checked

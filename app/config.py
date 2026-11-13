@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     # a fast bounce, and Doji risk per share is small -- the TF limit of 25 %
     # of R would turn away many good ones. 0 disables the check.
     doji_max_entry_slippage_pct_of_risk: float = 50.0
+    # Test phase: buy a Doji whatever the spread or how far the ask has run,
+    # as long as the ask is still above the stop. The position is then sized
+    # off the ask, so the dollar risk stays at the colour's budget. Turns the
+    # spread %, spread-of-risk and slippage checks off for Dojis only.
+    doji_skip_spread_checks: bool = True
     doji_skip_minutes_after_open: int = 0
     doji_stop_minutes_before_close: int = 15
     # Stop ladder: breakeven at this R, trailing distance (in R) once 10 R is
