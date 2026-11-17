@@ -33,6 +33,20 @@ def split_quarters(quantity: int) -> list[int]:
     return {1: [0, 0, 0, 1], 2: [1, 0, 0, 1], 3: [1, 1, 0, 1]}[quantity]
 
 
+def split_for_tier(quantity: int, tier: str, orange_first_share: float = 0.75) -> list[int]:
+    """Share counts for [2 R, 5 R, 10 R, trailing rest] by colour.
+
+    Green and yellow: quarters (split_quarters), they need their runners.
+    Orange: orange_first_share of the position at 2 R and the rest trails --
+    orange Dojis mostly reach 2-3 R and then turn (test 17.11.: 47 signals,
+    +28.2 R instead of +21.8 R). The trail keeps at least one share.
+    """
+    if tier != "orange" or orange_first_share <= 0.25 or quantity < 2:
+        return split_quarters(quantity)
+    first = min(int(quantity * orange_first_share), quantity - 1)
+    return [first, 0, 0, quantity - first]
+
+
 def stop_quantities(quantity: int) -> list[int]:
     """Sizes of the stop orders: one per quarter that has a target (its OCA
     partner) plus the trailing rest. They always add up to the position."""

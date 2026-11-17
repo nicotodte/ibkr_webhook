@@ -92,5 +92,27 @@ class ExtendedExit(unittest.TestCase):
         self.assertIsNone(doji.extended_hours_exit_limit(0.0, 0.5))
 
 
+
+class SplitForTier(unittest.TestCase):
+    def test_green_and_yellow_keep_quarters(self):
+        self.assertEqual(doji.split_for_tier(13, "green"), [3, 3, 3, 4])
+        self.assertEqual(doji.split_for_tier(13, "yellow"), [3, 3, 3, 4])
+
+    def test_orange_three_quarters_at_2r(self):
+        self.assertEqual(doji.split_for_tier(100, "orange"), [75, 0, 0, 25])
+        self.assertEqual(doji.split_for_tier(13, "orange"), [9, 0, 0, 4])
+        self.assertEqual(doji.split_for_tier(4, "orange"), [3, 0, 0, 1])
+        self.assertEqual(doji.split_for_tier(2, "orange"), [1, 0, 0, 1])
+        self.assertEqual(doji.split_for_tier(1, "orange"), [0, 0, 0, 1])
+
+    def test_orange_always_adds_up_and_keeps_a_trail(self):
+        for q in range(1, 300):
+            s = doji.split_for_tier(q, "orange")
+            self.assertEqual(sum(s), q)
+            self.assertGreaterEqual(s[3], 1)
+
+    def test_orange_quarter_setting_means_old_behaviour(self):
+        self.assertEqual(doji.split_for_tier(13, "orange", 0.25), [3, 3, 3, 4])
+
 if __name__ == "__main__":
     unittest.main()

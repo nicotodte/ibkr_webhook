@@ -105,6 +105,9 @@ class Settings(BaseSettings):
     doji_trail_r_green: float = 5.0
     doji_trail_r_yellow: float = 5.0
     doji_trail_r_orange: float = 3.0
+    # Orange sells this share of the position at 2 R (instead of a quarter at
+    # 2, 5 and 10 R); the rest trails. 0.25 = quarters like green and yellow.
+    doji_orange_first_target_share: float = 0.75
     # Positions already trailing (10 R reached) stay open through the close;
     # all other Doji positions are flattened with the rest. Outside regular
     # hours the bot watches the price itself and sells with a limit this far

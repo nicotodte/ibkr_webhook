@@ -540,7 +540,7 @@ async def _handle_doji(alert: BotAlert) -> dict:
     # and is the one that trails.
     targets = []
     if risk > 0:
-        sizes = doji.split_quarters(filled_qty)
+        sizes = doji.split_for_tier(filled_qty, alert.tier or "", settings.doji_orange_first_target_share)
         prices = doji.target_prices(fill, risk)
     else:
         # Filled at or below the stop: the stop order takes it straight out.
