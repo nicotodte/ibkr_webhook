@@ -437,6 +437,8 @@ async def handle_doji(alert: BotAlert) -> dict:
             "spread_pct_of_risk": _r(result.get("spread_pct_of_risk")),
             "slippage_pct_of_risk": _r(result.get("slippage_pct_of_risk")),
             "detail": result.get("detail", ""),
+            "level": alert.level or "",
+            "info": alert.info or "",
         })
     except Exception:
         logger.exception("Could not write the Doji signal journal")

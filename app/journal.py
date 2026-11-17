@@ -16,7 +16,7 @@ from typing import Optional
 SIGNAL_FIELDS = [
     "time_utc", "symbol", "tier", "trade_id", "alert_entry", "alert_stop",
     "status", "reason", "quantity", "bid", "ask", "spread_pct",
-    "spread_pct_of_risk", "slippage_pct_of_risk", "detail",
+    "spread_pct_of_risk", "slippage_pct_of_risk", "detail", "level", "info",
 ]
 
 TRADE_FIELDS = [
