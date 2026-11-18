@@ -84,8 +84,8 @@ class Settings(BaseSettings):
     # quarter exits need a real share count.
     doji_enabled: bool = True
     doji_risk_green_usd: float = 100.0
-    doji_risk_yellow_usd: float = 50.0
-    doji_risk_orange_usd: float = 25.0
+    doji_risk_yellow_usd: float = 25.0
+    doji_risk_orange_usd: float = 50.0
     # Entry window for Doji trades. Many good orange Dojis come in the first
     # minutes after the open, so unlike the TF entries they are not skipped.
     # The alert comes a few seconds after the Doji candle closed, often into
@@ -107,7 +107,17 @@ class Settings(BaseSettings):
     doji_trail_r_orange: float = 3.0
     # Orange sells this share of the position at 2 R (instead of a quarter at
     # 2, 5 and 10 R); the rest trails. 0.25 = quarters like green and yellow.
-    doji_orange_first_target_share: float = 0.75
+    doji_orange_first_target_share: float = 0.25
+    # Doji buy: a limit at most this share of the risk (entry - stop) above
+    # the alert price. The size is computed from that limit, so the dollar
+    # risk never exceeds the budget; is the ask already above it, there is no
+    # trade. 13./17.11.: all 6 buys filled more than 50 % of R above the alert
+    # lost (-8.6 R). 0 = market order like before.
+    doji_entry_cap_pct_of_risk: float = 50.0
+    doji_entry_fill_timeout_seconds: float = 10.0
+    # US ETFs cannot be bought by EU retail accounts (no KID, IBKR error 201):
+    # trade their CFD instead. CFD trades are always closed before the bell.
+    doji_etf_as_cfd: bool = True
     # Positions already trailing (10 R reached) stay open through the close;
     # all other Doji positions are flattened with the rest. Outside regular
     # hours the bot watches the price itself and sells with a limit this far

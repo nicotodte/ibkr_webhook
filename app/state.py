@@ -26,6 +26,7 @@ class TradeState:
     # defaults keep older state files loading.
     strategy: str = "tf"  # tf | doji
     tier: str = ""
+    sec_type: str = "STK"  # STK, or CFD for ETFs (EU accounts cannot buy US ETFs)
     risk_per_share: float = 0.0
     high_water: float = 0.0
     trailing: bool = False

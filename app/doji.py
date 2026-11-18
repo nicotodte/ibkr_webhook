@@ -64,6 +64,12 @@ def ceil_cent(price: float) -> float:
     return math.ceil(price * 100 - 1e-9) / 100
 
 
+def entry_limit(entry: float, stop: float, cap_pct_of_risk: float) -> float:
+    """Highest price a Doji buy may pay: the alert price plus cap_pct_of_risk
+    percent of its risk, rounded down to the cent."""
+    return floor_cent(entry + cap_pct_of_risk / 100 * (entry - stop))
+
+
 def target_prices(entry: float, risk: float) -> list[float]:
     return [ceil_cent(entry + r * risk) for r in TARGETS_R]
 

@@ -329,7 +329,8 @@ async def flatten_all_before_close() -> dict:
     """
     closed = []
     for state in await position_store.all_open():
-        if state.strategy == "doji" and state.trailing and settings.doji_keep_trailing_overnight:
+        if (state.strategy == "doji" and state.trailing and settings.doji_keep_trailing_overnight
+                and state.sec_type != "CFD"):
             logger.info("Keeping trailing Doji position %s open through the close", state.symbol)
             continue
         try:
@@ -346,9 +347,12 @@ async def flatten_all_before_close() -> dict:
                 qty = int(pos.position) if pos else 0
             contract = None
             if qty > 0:
-                contract = await ibkr_client.qualify_stock(
-                    state.symbol, settings.default_exchange, settings.default_currency
-                )
+                if state.strategy == "doji":
+                    contract, _ = await _doji_contracts(state.symbol, state.sec_type)
+                else:
+                    contract = await ibkr_client.qualify_stock(
+                        state.symbol, settings.default_exchange, settings.default_currency
+                    )
                 sell = await ibkr_client.place_market_order(contract, "SELL", qty)
                 if state.strategy == "doji":
                     try:
@@ -452,6 +456,19 @@ def _order_detail(trade) -> str:
     return (f"status={trade.orderStatus.status}; " + " | ".join(msgs))[:300]
 
 
+ETF_STOCK_TYPES = {"ETF", "ETN", "ETC", "ETP"}
+
+
+async def _doji_contracts(symbol: str, sec_type: str):
+    """(contract to trade, contract for prices). A CFD is traded, but its
+    prices come from the ETF itself: same price, and the stock quote is the
+    one the account has market data for."""
+    stock = await ibkr_client.qualify_stock(symbol, settings.default_exchange, settings.default_currency)
+    if sec_type == "CFD":
+        return await ibkr_client.qualify_cfd(symbol, settings.default_currency), stock
+    return stock, stock
+
+
 def _r(x):
     return round(x, 3) if isinstance(x, (int, float)) else ""
 
@@ -500,6 +517,40 @@ async def _handle_doji(alert: BotAlert) -> dict:
         return checked
     contract, quantity, quote, fx_rate, available_cash_eur = checked
 
+    # US ETFs: an EU retail account gets IBKR error 201 (no KID) on the ETF
+    # itself, so the CFD on it is traded. Prices still come from the ETF.
+    sec_type = "STK"
+    data_contract = contract
+    if settings.doji_etf_as_cfd:
+        try:
+            is_etf = await ibkr_client.stock_type(contract) in ETF_STOCK_TYPES
+        except Exception:
+            logger.warning("Could not read the stock type of %s", alert.symbol, exc_info=True)
+            is_etf = False
+        if is_etf:
+            try:
+                contract = await ibkr_client.qualify_cfd(alert.symbol, settings.default_currency)
+                sec_type = "CFD"
+            except Exception as exc:
+                logger.warning("Rejecting Doji for %s: ETF without CFD (%s)", alert.symbol, exc)
+                return {"status": "rejected", "reason": "no_cfd", "detail": str(exc)[:300]}
+
+    # Pay at most the alert price plus a share of its risk. The size comes from
+    # that worst case, so the dollar risk stays within the colour's budget
+    # however the fill comes (AMAT 17.11.: market buy 0.49 above the ask, 111
+    # instead of 25 USD at risk).
+    limit = None
+    if settings.doji_entry_cap_pct_of_risk > 0:
+        limit = doji.entry_limit(alert.entry, alert.stop, settings.doji_entry_cap_pct_of_risk)
+        if quote.ask > limit:
+            logger.info("Rejecting Doji for %s: ask %.2f already above the limit %.2f", alert.symbol, quote.ask, limit)
+            return {"status": "rejected", "reason": "price_ran_away", "bid": quote.bid, "ask": quote.ask,
+                    "detail": f"limit {limit}"}
+        try:
+            quantity = calculate_quantity(limit, alert.stop, fx_rate, risk_usd)
+        except SizingError as exc:
+            return {"status": "rejected", "reason": str(exc)}
+
     logger.info(
         "Doji accepted: %s %s qty=%s entry=%s stop=%s risk=%.0f USD spread=%.3f%%",
         alert.symbol, alert.tier, quantity, alert.entry, alert.stop, risk_usd, quote.spread_pct,
@@ -510,9 +561,12 @@ async def _handle_doji(alert: BotAlert) -> dict:
     # A little before the order, so the buy execution falls inside the
     # journal window even with a few seconds of clock difference to IBKR.
     opened_at = datetime.now(timezone.utc) - timedelta(seconds=30)
-    buy_trade = await ibkr_client.place_market_order(contract, "BUY", quantity)
+    if limit is not None:
+        buy_trade = await ibkr_client.place_limit_order(contract, "BUY", quantity, limit, outside_rth=False, tif="DAY")
+    else:
+        buy_trade = await ibkr_client.place_market_order(contract, "BUY", quantity)
     try:
-        await ibkr_client.wait_for_fill(buy_trade)
+        await ibkr_client.wait_for_fill(buy_trade, timeout=settings.doji_entry_fill_timeout_seconds)
     except Exception as exc:
         logger.warning("Doji buy for %s not filled in time (%s)", alert.symbol, exc)
     if buy_trade.orderStatus.status != "Filled":
@@ -551,7 +605,8 @@ async def _handle_doji(alert: BotAlert) -> dict:
             continue
         group = f"doji-{alert.symbol}-{alert.trade_id}-{i}"
         st = await ibkr_client.place_stop_order(contract, "SELL", size, stop, oca_group=group)
-        tp = await ibkr_client.place_limit_order(contract, "SELL", size, price, oca_group=group)
+        # CFDs trade in regular hours only
+        tp = await ibkr_client.place_limit_order(contract, "SELL", size, price, outside_rth=sec_type != "CFD", oca_group=group)
         targets.append({
             "order_id": tp.order.orderId,
             "stop_order_id": st.order.orderId,
@@ -570,6 +625,7 @@ async def _handle_doji(alert: BotAlert) -> dict:
         status="open",
         strategy="doji",
         tier=alert.tier,
+        sec_type=sec_type,
         risk_per_share=max(risk, 0.0),
         high_water=fill,
         targets=targets,
@@ -581,7 +637,7 @@ async def _handle_doji(alert: BotAlert) -> dict:
     )
     _sync_fills(state)
     await position_store.set(key, state)
-    await ibkr_client.stream_ticker(contract)
+    await ibkr_client.stream_ticker(data_contract)
     logger.info(
         "Doji opened: %s %s qty=%s fill=%.2f stop=%.2f R=%.2f targets=%s",
         alert.symbol, alert.tier, filled_qty, fill, stop, risk,
@@ -600,6 +656,7 @@ async def _handle_doji(alert: BotAlert) -> dict:
         "requested_quantity": quantity,
         "risk_per_share": round(risk, 4),
         "targets": targets,
+        "detail": ("CFD " if sec_type == "CFD" else "") + (f"limit {limit} fill {fill}" if limit is not None else f"fill {fill}"),
     }
 
 
@@ -646,9 +703,7 @@ async def _manage_doji(state: TradeState):
         return
 
     _flat_passes.pop(key, None)
-    contract = await ibkr_client.qualify_stock(
-        state.symbol, settings.default_exchange, settings.default_currency
-    )
+    contract, data_contract = await _doji_contracts(state.symbol, state.sec_type)
     changed = False
 
     # A quarter is done once neither its target nor its stop is working any
@@ -663,7 +718,7 @@ async def _manage_doji(state: TradeState):
         state.targets = still_open
         changed = True
 
-    ticker = await ibkr_client.stream_ticker(contract)
+    ticker = await ibkr_client.stream_ticker(data_contract)
     last = ticker.last if ticker.last and ticker.last > 0 else 0.0
     bid = ticker.bid if ticker.bid and ticker.bid > 0 else 0.0
     price = last or bid

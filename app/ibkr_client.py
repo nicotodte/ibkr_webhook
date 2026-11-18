@@ -3,7 +3,7 @@ import logging
 import time
 from typing import Callable, Optional
 
-from ib_async import IB, Forex, LimitOrder, MarketOrder, Order, Position, Stock, StopOrder, Trade
+from ib_async import CFD, IB, Forex, LimitOrder, MarketOrder, Order, Position, Stock, StopOrder, Trade
 
 from config import settings
 from spread import QuoteSample
@@ -51,6 +51,7 @@ def _set_oca(order, group: str):
 
 class IBKRClient:
     def __init__(self):
+        self._stock_types: dict[str, str] = {}
         self.ib = IB()
         # pair -> (rate, time.monotonic() when it was fetched)
         self._fx_cache: dict[str, tuple[float, float]] = {}
@@ -88,6 +89,24 @@ class IBKRClient:
         if not qualified:
             raise RuntimeError(f"Could not qualify contract for symbol {symbol}")
         return qualified[0]
+
+    async def qualify_cfd(self, symbol: str, currency: str) -> CFD:
+        await self.connect()
+        qualified = await self.ib.qualifyContractsAsync(CFD(symbol, "SMART", currency))
+        if not qualified:
+            raise RuntimeError(f"IBKR offers no CFD for {symbol}")
+        return qualified[0]
+
+    async def stock_type(self, contract) -> str:
+        """IBKR's stockType for a stock contract: COMMON, ETF, ADR, REIT, ...
+        Cached per symbol, it does not change."""
+        if contract.symbol in self._stock_types:
+            return self._stock_types[contract.symbol]
+        await self.connect()
+        details = await self.ib.reqContractDetailsAsync(contract)
+        st = (details[0].stockType or "").upper() if details else ""
+        self._stock_types[contract.symbol] = st
+        return st
 
     async def get_quote_samples(
         self,

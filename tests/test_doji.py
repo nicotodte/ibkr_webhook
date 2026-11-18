@@ -114,5 +114,19 @@ class SplitForTier(unittest.TestCase):
     def test_orange_quarter_setting_means_old_behaviour(self):
         self.assertEqual(doji.split_for_tier(13, "orange", 0.25), [3, 3, 3, 4])
 
+
+class EntryLimit(unittest.TestCase):
+    def test_half_the_risk_above_the_alert_price(self):
+        self.assertEqual(doji.entry_limit(338.52, 338.30, 50), 338.63)
+        self.assertEqual(doji.entry_limit(100.0, 99.0, 50), 100.5)
+
+    def test_rounds_down_never_pays_more(self):
+        self.assertEqual(doji.entry_limit(10.0, 9.97, 50), 10.01)   # 10.015 -> 10.01
+
+    def test_sized_from_the_limit_keeps_the_budget(self):
+        # AMAT 17.11.: sized from the ask 338.44 -> 178 shares; from the limit -> 75 shares
+        limit = doji.entry_limit(338.52, 338.30, 50)
+        self.assertEqual(int(25 / (limit - 338.30)), 75)
+
 if __name__ == "__main__":
     unittest.main()
