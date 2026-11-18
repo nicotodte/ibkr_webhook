@@ -97,7 +97,24 @@ USD und in R, Kommission. Mit gesetztem `JOURNAL_TOKEN`:
   Einstellungen einfügen, dann stehen Kauf, Stopp, Ausstieg und Ergebnis jedes
   Bot-Trades im Chart des Symbols.
 
-Ohne `JOURNAL_TOKEN` sind die Seiten aus; geschrieben wird trotzdem.
+Ohne gesetztes `JOURNAL_TOKEN` gilt ein Token, das der Bot aus `WEBHOOK_SECRET`
+ableitet (24 Zeichen, das Secret lässt sich daraus nicht zurückrechnen). Er
+gilt für die Doji- und die TF-Seiten.
+
+**TF-Trade-Protokoll:** Dasselbe für die TF-Trades. `/data/tf_signals.csv`:
+jeder Einstiegs-Alarm (gekauft, oder nicht gekauft mit Grund und Spread) und
+die Leiter-Alarme offener Trades. `/data/tf_trades.csv`: jeder geschlossene
+TF-Trade mit Fib-Level des Einstiegs (0.9 / 0.95 / 0.975, aus dem `info`-Feld
+des Pine-Alarms), echtem Kaufkurs, Abweichung zum Signal, höchstem und
+tiefstem Kurs während des Trades (1-Minuten-Kerzen von IBKR), erreichten
+Leiter-Stufen, Ausstiegsgrund (Leiter, `exit_all`, Glattstellung vor Schluss,
+Stop), Gewinn netto, R und Ergebnis. Ein Stop, der bei IBKR auslöst, wird vom
+Monitor daran erkannt, dass die Position weg ist.
+
+- `https://DOMAIN/tf/report?token=…` — lesbare Seite: Gesamtbild je Level,
+  offene Trades, geschlossene Trades, Gründe für nicht gekaufte Signale
+- `https://DOMAIN/tf/stats?token=…` — dieselben Zahlen als JSON
+- `https://DOMAIN/tf/trades.csv?token=…` und `…/tf/signals.csv?token=…` — Rohdaten
 
 Der Listenalarm des Longterm-Skripts schickt auch seine Achtung/HOLD/K=0-
 Texte an den Webhook; alles, was nicht mit `{` beginnt, ignoriert der Bot.
