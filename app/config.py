@@ -115,6 +115,19 @@ class Settings(BaseSettings):
     # lost (-8.6 R). 0 = market order like before.
     doji_entry_cap_pct_of_risk: float = 50.0
     doji_entry_fill_timeout_seconds: float = 10.0
+    # The buy limit sits this share of the risk above the ask (never above the
+    # cap above); the size is computed from it.
+    doji_entry_above_ask_pct_of_risk: float = 10.0
+    # Risk by breadth: with at least DOJI_BREADTH_MIN_SIGNALS Doji alerts of
+    # other symbols in the last DOJI_BREADTH_WINDOW_MINUTES the colour's risk
+    # is multiplied by DOJI_BREADTH_HIGH_MULT, otherwise by DOJI_BREADTH_LOW_MULT.
+    # 5 live days, tested on days left out: +1412 instead of +907 USD.
+    doji_breadth_window_minutes: float = 10.0
+    doji_breadth_min_signals: int = 6
+    doji_breadth_high_mult: float = 2.0
+    doji_breadth_low_mult: float = 0.5
+    # Largest single Doji position (EUR), whatever the stop distance.
+    doji_max_position_eur: float = 250000.0
     # US ETFs cannot be bought by EU retail accounts (no KID, IBKR error 201):
     # trade their CFD instead. CFD trades are always closed before the bell.
     doji_etf_as_cfd: bool = True
@@ -135,6 +148,9 @@ class Settings(BaseSettings):
     doji_signals_file: str = "/data/doji_signals.csv"
     doji_trades_file: str = "/data/doji_trades.csv"
     journal_token: str = ""
+    # Same for the TF trades: every TF alert, and every closed TF trade.
+    tf_signals_file: str = "/data/tf_signals.csv"
+    tf_trades_file: str = "/data/tf_trades.csv"
 
     # Where open-position state (symbol -> trade_id/qty/stop order) is
     # persisted so it survives a webhook container restart.

@@ -27,6 +27,7 @@ class TradeState:
     strategy: str = "tf"  # tf | doji
     tier: str = ""
     sec_type: str = "STK"  # STK, or CFD for ETFs (EU accounts cannot buy US ETFs)
+    planned_risk_usd: float = 0.0  # colour budget x breadth multiplier at entry
     risk_per_share: float = 0.0
     high_water: float = 0.0
     trailing: bool = False
@@ -41,6 +42,13 @@ class TradeState:
     initial_quantity: int = 0
     low_water: float = 0.0
     fills: list = field(default_factory=list)
+    # Journal data (TF trades). status "journal_pending" = closed at IBKR, the
+    # fills are given a few seconds to arrive before the journal row is written.
+    entry_level: str = ""
+    entry_info: str = ""
+    levels_hit: list = field(default_factory=list)
+    closed_at: str = ""
+    journal_reason: str = ""
 
 
 DOJI_KEY_PREFIX = "DOJI:"
@@ -98,6 +106,12 @@ class PositionStore:
         async with self._lock:
             self._trades.pop(symbol, None)
             self._save()
+
+    async def all_tf(self) -> list[TradeState]:
+        """TF trades that are open or waiting for their journal row."""
+        async with self._lock:
+            return [t for t in self._trades.values()
+                    if t.strategy == "tf" and t.status in ("open", "journal_pending")]
 
     async def all_open(self) -> list[TradeState]:
         async with self._lock:

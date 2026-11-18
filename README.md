@@ -65,6 +65,8 @@ Bot selbst, es kommen keine Folge-Alerts.
 | R | Tatsächlicher Kaufkurs − Stop |
 | 2 R / 5 R / 10 R | Grün und Gelb: je ¼ der Position per Limit-Order. Orange genauso (`DOJI_ORANGE_FIRST_TARGET_SHARE`, Vorgabe 0.25 = Viertel; 0.75 = ¾ bei 2 R) (liegen von Anfang an bei IBKR, auch außerhalb der Handelszeit gültig). Rest bei kleinen Stückzahlen: 13 → 3, 3, 3, 4 |
 | Stopps | Jedes Viertel mit Ziel hat einen eigenen Stopp; Stopp und Ziel bilden ein OCA-Paar (Typ 2). Füllt das Ziel, streicht oder verkleinert IBKR selbst den Stopp dieses Viertels — und umgekehrt. Die Stopps decken so nie mehr Aktien ab, als noch gehalten werden. Das letzte Viertel hat einen eigenen Stopp, der den Trail macht. Der Bot verschiebt nur die Preise, nie die Stückzahl. |
+| Risiko nach Häufung | Kommen in den 10 Minuten davor mindestens 6 Dojis anderer Aktien (breiter Ausverkauf), doppeltes Risiko der Farbe, sonst halbes. Jedes Signal wird gehandelt. `DOJI_BREADTH_*` |
+| Kauf | Limit knapp über dem Briefkurs (+10 % von R), nie über Signalpreis + 50 % von R; Stückzahl nach diesem Limit, höchstens `DOJI_MAX_POSITION_EUR` je Position. ETFs als CFD. |
 | Stopp-Treppe | 1,5 R erreicht → Stopp auf Einstieg; 5 R → Stopp auf 2 R; 10 R → Stopp auf 5 R |
 | Trail | ab 10 R läuft der Stopp `DOJI_TRAIL_R_…` × R unter dem Höchstkurs mit (grün/gelb 5 R, orange 3 R) |
 | Handelsschluss | Positionen ohne Trail werden wie alle anderen 10 Min vor Schluss verkauft. Positionen mit Trail bleiben offen. |

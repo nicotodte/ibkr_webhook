@@ -16,7 +16,7 @@ from typing import Optional
 SIGNAL_FIELDS = [
     "time_utc", "symbol", "tier", "trade_id", "alert_entry", "alert_stop",
     "status", "reason", "quantity", "bid", "ask", "spread_pct",
-    "spread_pct_of_risk", "slippage_pct_of_risk", "detail", "level", "info",
+    "spread_pct_of_risk", "slippage_pct_of_risk", "detail", "breadth", "risk_usd", "level", "info",
 ]
 
 TRADE_FIELDS = [
@@ -133,29 +133,30 @@ def trade_row(
     }
 
 
+def bucket(rs: list) -> dict:
+    """Win rate, P&L and R of closed-trade rows. A trade counts as won above
+    +0.1 R, lost below -0.1 R, else breakeven."""
+    n = len(rs)
+    r = [float(x["r_multiple"]) for x in rs if x.get("r_multiple") not in ("", None)]
+    net = sum(float(x.get("net_pnl_usd") or 0) for x in rs)
+    won = sum(1 for v in r if v > 0.1)
+    lost = sum(1 for v in r if v < -0.1)
+    return {
+        "trades": n,
+        "won": won,
+        "lost": lost,
+        "breakeven": len(r) - won - lost,
+        "win_rate_pct": round(won / (won + lost) * 100, 1) if won + lost else None,
+        "net_pnl_usd": round(net, 2),
+        "sum_r": round(sum(r), 2),
+        "avg_r": round(sum(r) / len(r), 2) if r else None,
+        "best_r": max(r) if r else None,
+        "worst_r": min(r) if r else None,
+    }
+
+
 def stats(rows: list) -> dict:
-    """Win rate, P&L and R per tier and in total from doji_trades.csv rows.
-    A trade counts as won above +0.1 R, lost below -0.1 R, else breakeven."""
-
-    def bucket(rs):
-        n = len(rs)
-        r = [float(x["r_multiple"]) for x in rs if x.get("r_multiple") not in ("", None)]
-        net = sum(float(x.get("net_pnl_usd") or 0) for x in rs)
-        won = sum(1 for v in r if v > 0.1)
-        lost = sum(1 for v in r if v < -0.1)
-        return {
-            "trades": n,
-            "won": won,
-            "lost": lost,
-            "breakeven": len(r) - won - lost,
-            "win_rate_pct": round(won / (won + lost) * 100, 1) if won + lost else None,
-            "net_pnl_usd": round(net, 2),
-            "sum_r": round(sum(r), 2),
-            "avg_r": round(sum(r) / len(r), 2) if r else None,
-            "best_r": max(r) if r else None,
-            "worst_r": min(r) if r else None,
-        }
-
+    """Win rate, P&L and R per tier and in total from doji_trades.csv rows."""
     out = {"total": bucket(rows)}
     for tier in ("green", "yellow", "orange"):
         out[tier] = bucket([x for x in rows if x.get("tier") == tier])
@@ -239,3 +240,106 @@ def read_all(path: str) -> list:
     for old in sorted(glob.glob(path + ".*.old")):
         rows += read_rows(old)
     return rows + read_rows(path)
+
+
+# ---------------------------------------------------------------- TF trades
+# tf_signals.csv  one row per TF alert that reached the bot: the entry alerts
+#                 (bought or why not) and the ladder alerts of open trades.
+# tf_trades.csv   one row per closed TF trade with the real fills.
+
+TF_SIGNAL_FIELDS = [
+    "time_utc", "symbol", "event", "trade_id", "level", "alert_entry", "alert_stop",
+    "status", "reason", "quantity", "fill_price", "bid", "ask", "spread_pct",
+    "spread_pct_of_risk", "slippage_pct_of_risk", "detail", "info",
+]
+
+TF_TRADE_FIELDS = [
+    "closed_utc", "opened_utc", "symbol", "trade_id", "entry_level",
+    "alert_entry", "alert_stop", "fill_price", "entry_slippage_pct",
+    "risk_per_share", "quantity", "risk_usd", "high", "low", "max_r", "min_r",
+    "levels_hit", "exit_reason", "sold_quantity", "avg_exit_price",
+    "pnl_usd", "commission_usd", "net_pnl_usd", "r_multiple", "result", "info",
+]
+
+
+def result_label(r_multiple) -> str:
+    try:
+        r = float(r_multiple)
+    except (TypeError, ValueError):
+        return ""
+    return "gewonnen" if r > 0.1 else "verloren" if r < -0.1 else "breakeven"
+
+
+def entry_level_from(level: Optional[str], info: Optional[str]) -> str:
+    """The fib level an entry came from: the alert's "level" if it has one,
+    else the label text the Pine script sends as info ("TF 0.95 R: ...")."""
+    if level:
+        return str(level)
+    import re
+    m = re.match(r"\s*TF\s+(\d+(?:\.\d+)?)", info or "")
+    return m.group(1) if m else ""
+
+
+def tf_trade_row(
+    *,
+    symbol: str,
+    trade_id: str,
+    opened_utc: str,
+    entry_level: str,
+    alert_entry: float,
+    alert_stop: float,
+    fill_price: float,
+    quantity: int,
+    high: Optional[float],
+    low: Optional[float],
+    levels_hit: list,
+    exit_reason: str,
+    fills: list,
+    info: str = "",
+    closed_utc: Optional[str] = None,
+) -> dict:
+    risk = fill_price - alert_stop
+    sells = [f for f in fills if f.get("side") == "SLD"]
+    sold = sum(f["qty"] for f in sells)
+    avg_exit = sum(f["qty"] * f["price"] for f in sells) / sold if sold else 0.0
+    pnl = (avg_exit - fill_price) * sold if sold else 0.0
+    commission = sum(f.get("commission") or 0.0 for f in fills)
+    net = pnl - commission
+    risk_usd = risk * quantity if risk > 0 else 0.0
+    r_mult = round(net / risk_usd, 2) if risk_usd else ""
+    return {
+        "closed_utc": closed_utc or now_utc(),
+        "opened_utc": opened_utc,
+        "symbol": symbol,
+        "trade_id": trade_id,
+        "entry_level": entry_level,
+        "alert_entry": alert_entry,
+        "alert_stop": alert_stop,
+        "fill_price": round(fill_price, 4),
+        "entry_slippage_pct": round((fill_price - alert_entry) / alert_entry * 100, 3) if alert_entry else "",
+        "risk_per_share": round(risk, 4),
+        "quantity": quantity,
+        "risk_usd": round(risk_usd, 2),
+        "high": round(high, 4) if high else "",
+        "low": round(low, 4) if low else "",
+        "max_r": round((high - fill_price) / risk, 2) if high and risk > 0 else "",
+        "min_r": round((low - fill_price) / risk, 2) if low and risk > 0 else "",
+        "levels_hit": " ".join(levels_hit),
+        "exit_reason": exit_reason,
+        "sold_quantity": sold,
+        "avg_exit_price": round(avg_exit, 4),
+        "pnl_usd": round(pnl, 2),
+        "commission_usd": round(commission, 2),
+        "net_pnl_usd": round(net, 2),
+        "r_multiple": r_mult,
+        "result": result_label(r_mult) if sold else "",
+        "info": info,
+    }
+
+
+def tf_stats(rows: list) -> dict:
+    """Totals and one bucket per entry level (0.9 / 0.95 / 0.975)."""
+    out = {"total": bucket(rows)}
+    for level in sorted({x.get("entry_level") or "?" for x in rows}):
+        out[level] = bucket([x for x in rows if (x.get("entry_level") or "?") == level])
+    return out

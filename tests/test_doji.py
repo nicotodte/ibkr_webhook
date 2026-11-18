@@ -128,5 +128,32 @@ class EntryLimit(unittest.TestCase):
         limit = doji.entry_limit(338.52, 338.30, 50)
         self.assertEqual(int(25 / (limit - 338.30)), 75)
 
+
+class BuyLimit(unittest.TestCase):
+    def test_a_little_above_the_ask(self):
+        # FCX 18.11.: entry 51.85, stop 51.75 - 0.10 ... use round numbers
+        limit, size_px = doji.buy_limit(100.0, 99.0, 100.05, 50, 10)
+        self.assertEqual(limit, 100.15)          # ask + 0.1 R
+        self.assertEqual(size_px, 100.15)
+
+    def test_never_above_the_cap(self):
+        limit, _ = doji.buy_limit(100.0, 99.0, 100.48, 50, 10)
+        self.assertEqual(limit, 100.5)           # entry + 0.5 R
+
+    def test_sizing_price_not_below_half_the_risk(self):
+        limit, size_px = doji.buy_limit(100.0, 99.0, 99.2, 50, 10)
+        self.assertEqual(limit, 99.3)
+        self.assertEqual(size_px, 99.5)          # entry - 0.5 R
+
+
+class BreadthCount(unittest.TestCase):
+    def test_counts_other_symbols_in_the_window(self):
+        b = doji.Breadth(600)
+        self.assertEqual(b.add(0, "A"), 0)
+        self.assertEqual(b.add(10, "B"), 1)
+        self.assertEqual(b.add(20, "A"), 1)      # A itself does not count
+        self.assertEqual(b.add(30, "C"), 2)
+        self.assertEqual(b.add(700, "D"), 0)     # all older than 10 min
+
 if __name__ == "__main__":
     unittest.main()

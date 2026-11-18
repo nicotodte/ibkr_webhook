@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -127,7 +128,9 @@ async def _pretrade_checks(
 
 async def handle_entry(alert: BotAlert) -> dict:
     existing = await position_store.get(alert.symbol)
-    if existing and existing.status == "open":
+    if existing and existing.status == "journal_pending":
+        await _tf_finalize(existing)
+    elif existing and existing.status == "open":
         live = await ibkr_client.get_position(alert.symbol)
         if live and live.position > 0:
             logger.warning(
@@ -143,7 +146,7 @@ async def handle_entry(alert: BotAlert) -> dict:
             alert.symbol, existing.trade_id,
         )
         await ibkr_client.cancel_order(existing.stop_order_id)
-        await position_store.delete(alert.symbol)
+        await _tf_finalize(existing)
 
     doji_trade = await position_store.get(doji_key(alert.symbol))
     if doji_trade and doji_trade.status in ("open", "closing"):
@@ -175,10 +178,13 @@ async def handle_entry(alert: BotAlert) -> dict:
             "status": "dry_run",
             "symbol": alert.symbol,
             "quantity": quantity,
+            "bid": quote.bid,
+            "ask": quote.ask,
             "spread_pct": spread_pct,
             "fx_rate": fx_rate,
         }
 
+    opened_at = datetime.now(timezone.utc) - timedelta(seconds=30)
     buy_trade = await ibkr_client.place_market_order(contract, "BUY", quantity)
     try:
         filled_qty = int(await ibkr_client.wait_for_fill(buy_trade))
@@ -204,6 +210,12 @@ async def handle_entry(alert: BotAlert) -> dict:
             stop_price=alert.stop,
             entry_price=buy_trade.orderStatus.avgFillPrice,
             status="open",
+            opened_at=opened_at.isoformat(),
+            alert_entry=alert.entry,
+            alert_stop=alert.stop,
+            initial_quantity=filled_qty,
+            entry_level=journal.entry_level_from(alert.level, alert.info),
+            entry_info=alert.info or "",
         ),
     )
 
@@ -212,6 +224,12 @@ async def handle_entry(alert: BotAlert) -> dict:
         "symbol": alert.symbol,
         "quantity": filled_qty,
         "requested_quantity": quantity,
+        "fill_price": buy_trade.orderStatus.avgFillPrice,
+        "bid": quote.bid,
+        "ask": quote.ask,
+        "spread_pct": spread_pct,
+        "spread_pct_of_risk": quote.spread_pct_of_risk,
+        "slippage_pct_of_risk": quote.slippage_pct_of_risk,
     }
 
 
@@ -228,7 +246,7 @@ async def handle_stop_to_breakeven(alert: BotAlert) -> dict:
 
     pos = await ibkr_client.get_position(alert.symbol)
     if not pos or pos.position <= 0:
-        await position_store.delete(alert.symbol)
+        await _tf_finalize(state)
         return {"status": "ignored", "reason": "no_live_position"}
 
     contract = await ibkr_client.qualify_stock(
@@ -241,6 +259,7 @@ async def handle_stop_to_breakeven(alert: BotAlert) -> dict:
         contract, state.stop_order_id, "SELL", pos.position, state.entry_price
     )
     state.stop_price = state.entry_price
+    state.levels_hit.append("0.843=Stop auf Einstand")
     await position_store.set(alert.symbol, state)
     return {"status": "stop_updated", "symbol": alert.symbol, "new_stop": state.entry_price}
 
@@ -261,7 +280,7 @@ async def handle_level(alert: BotAlert) -> dict:
     pos = await ibkr_client.get_position(alert.symbol)
     qty = int(pos.position) if pos else 0
     if qty <= 0:
-        await position_store.delete(alert.symbol)
+        await _tf_finalize(state)
         return {"status": "ignored", "reason": "no_live_position"}
 
     contract = await ibkr_client.qualify_stock(
@@ -279,10 +298,12 @@ async def handle_level(alert: BotAlert) -> dict:
         )
         state.quantity = remaining
         state.stop_price = alert.new_stop
+        state.levels_hit.append(alert.level or "?")
         await position_store.set(alert.symbol, state)
     else:
         await ibkr_client.cancel_order(state.stop_order_id)
-        await position_store.delete(alert.symbol)
+        state.levels_hit.append(alert.level or "?")
+        await _tf_mark_closed(state, f"Level {alert.level}: Rest verkauft")
 
     logger.info(
         "Level %s for %s: sold %s, remaining %s, new_stop=%s",
@@ -312,7 +333,7 @@ async def handle_exit_all(alert: BotAlert) -> dict:
         )
         await ibkr_client.place_market_order(contract, "SELL", qty)
 
-    await position_store.delete(alert.symbol)
+    await _tf_mark_closed(state, "exit_all (-0.236)")
     logger.info("Exit-all for %s: sold %s, position closed", alert.symbol, qty)
     return {"status": "closed", "symbol": alert.symbol, "sold": qty}
 
@@ -364,7 +385,10 @@ async def flatten_all_before_close() -> dict:
                 _sync_fills(state)
                 _journal_close(state, "flatten_before_close")
 
-            await position_store.delete(store_key(state))
+            if state.strategy == "tf":
+                await _tf_mark_closed(state, "flatten_before_close")
+            else:
+                await position_store.delete(store_key(state))
             logger.info("Flattened %s before close: sold %s", state.symbol, qty)
             closed.append({"symbol": state.symbol, "sold": qty})
         except Exception:
@@ -422,8 +446,14 @@ async def _stop_doji_stream(symbol: str):
         logger.warning("Could not stop the price stream for %s", symbol, exc_info=True)
 
 
+_breadth = doji.Breadth(settings.doji_breadth_window_minutes * 60)
+
+
 async def handle_doji(alert: BotAlert) -> dict:
-    result = await _handle_doji(alert)
+    # Counted before any check: every Doji alert that arrives says something
+    # about the market, also the ones that are not bought.
+    breadth = _breadth.add(time.time(), alert.symbol)
+    result = await _handle_doji(alert, breadth)
     try:
         journal.append_row(settings.doji_signals_file, journal.SIGNAL_FIELDS, {
             "time_utc": journal.now_utc(),
@@ -441,6 +471,8 @@ async def handle_doji(alert: BotAlert) -> dict:
             "spread_pct_of_risk": _r(result.get("spread_pct_of_risk")),
             "slippage_pct_of_risk": _r(result.get("slippage_pct_of_risk")),
             "detail": result.get("detail", ""),
+            "breadth": breadth,
+            "risk_usd": result.get("risk_usd", ""),
             "level": alert.level or "",
             "info": alert.info or "",
         })
@@ -473,7 +505,7 @@ def _r(x):
     return round(x, 3) if isinstance(x, (int, float)) else ""
 
 
-async def _handle_doji(alert: BotAlert) -> dict:
+async def _handle_doji(alert: BotAlert, breadth: int = 0) -> dict:
     if not settings.doji_enabled:
         return {"status": "ignored", "reason": "doji_disabled"}
     if alert.entry is None or alert.stop is None or alert.tier is None:
@@ -505,7 +537,12 @@ async def _handle_doji(alert: BotAlert) -> dict:
         logger.info("Ignoring Doji for %s: outside the Doji entry window", alert.symbol)
         return {"status": "ignored", "reason": "outside_trading_hours"}
 
-    risk_usd = _doji_risk(alert.tier)
+    # More risk when many Dojis come at once (broad sell-off), less for a
+    # lone one -- every signal is still taken.
+    mult = settings.doji_breadth_high_mult if breadth >= settings.doji_breadth_min_signals else settings.doji_breadth_low_mult
+    risk_usd = _doji_risk(alert.tier) * mult
+    logger.info("Doji %s: %s other Dojis in the last %.0f min -> risk x%.1f = %.0f USD",
+                alert.symbol, breadth, settings.doji_breadth_window_minutes, mult, risk_usd)
     checked = await _pretrade_checks(
         alert,
         risk_usd,
@@ -541,15 +578,27 @@ async def _handle_doji(alert: BotAlert) -> dict:
     # instead of 25 USD at risk).
     limit = None
     if settings.doji_entry_cap_pct_of_risk > 0:
-        limit = doji.entry_limit(alert.entry, alert.stop, settings.doji_entry_cap_pct_of_risk)
-        if quote.ask > limit:
-            logger.info("Rejecting Doji for %s: ask %.2f already above the limit %.2f", alert.symbol, quote.ask, limit)
+        cap = doji.entry_limit(alert.entry, alert.stop, settings.doji_entry_cap_pct_of_risk)
+        if quote.ask > cap:
+            logger.info("Rejecting Doji for %s: ask %.2f already above the limit %.2f", alert.symbol, quote.ask, cap)
             return {"status": "rejected", "reason": "price_ran_away", "bid": quote.bid, "ask": quote.ask,
-                    "detail": f"limit {limit}"}
+                    "detail": f"limit {cap}", "risk_usd": risk_usd}
+        # A little above the ask, sized from that limit: the risk stays within
+        # the budget and a normal fill uses ~90 % of it (sizing from the cap
+        # itself left FCX 18.11. at 26 of 50 USD).
+        limit, size_price = doji.buy_limit(alert.entry, alert.stop, quote.ask,
+                                           settings.doji_entry_cap_pct_of_risk,
+                                           settings.doji_entry_above_ask_pct_of_risk)
         try:
-            quantity = calculate_quantity(limit, alert.stop, fx_rate, risk_usd)
+            quantity = calculate_quantity(size_price, alert.stop, fx_rate, risk_usd)
         except SizingError as exc:
-            return {"status": "rejected", "reason": str(exc)}
+            return {"status": "rejected", "reason": str(exc), "risk_usd": risk_usd}
+    max_qty = int(settings.doji_max_position_eur * fx_rate / (limit or quote.ask))
+    if quantity > max_qty:
+        logger.info("Doji %s: %s shares capped to %s (max position %.0f EUR)", alert.symbol, quantity, max_qty, settings.doji_max_position_eur)
+        quantity = max_qty
+    if quantity < 1:
+        return {"status": "rejected", "reason": "quantity_below_one", "risk_usd": risk_usd}
 
     logger.info(
         "Doji accepted: %s %s qty=%s entry=%s stop=%s risk=%.0f USD spread=%.3f%%",
@@ -626,6 +675,7 @@ async def _handle_doji(alert: BotAlert) -> dict:
         strategy="doji",
         tier=alert.tier,
         sec_type=sec_type,
+        planned_risk_usd=risk_usd,
         risk_per_share=max(risk, 0.0),
         high_water=fill,
         targets=targets,
@@ -656,6 +706,7 @@ async def _handle_doji(alert: BotAlert) -> dict:
         "requested_quantity": quantity,
         "risk_per_share": round(risk, 4),
         "targets": targets,
+        "risk_usd": risk_usd,
         "detail": ("CFD " if sec_type == "CFD" else "") + (f"limit {limit} fill {fill}" if limit is not None else f"fill {fill}"),
     }
 
@@ -852,7 +903,7 @@ def _journal_close(state: TradeState, reason: str):
             fill_price=state.entry_price,
             initial_stop=state.entry_price - state.risk_per_share,
             quantity=state.initial_quantity,
-            planned_risk_usd=_doji_risk(state.tier) if state.tier else 0.0,
+            planned_risk_usd=state.planned_risk_usd or (_doji_risk(state.tier) if state.tier else 0.0),
             high=state.high_water,
             low=state.low_water,
             reached_trail=state.trailing,
@@ -866,3 +917,134 @@ def _journal_close(state: TradeState, reason: str):
         )
     except Exception:
         logger.exception("Could not write the Doji trade journal for %s", state.symbol)
+
+
+# ------------------------------------------------------------ TF journal
+
+TF_JOURNAL_SETTLE_SECONDS = 10
+TF_MIN_AGE_BEFORE_CLOSE_CHECK_SECONDS = 90
+
+
+def log_tf_signal(alert: BotAlert, result: dict):
+    """One row in tf_signals.csv per TF alert. Ladder alerts for a symbol
+    without an open trade are left out: Pine fires them whether or not the
+    bot bought. Never raises."""
+    try:
+        if alert.event != "entry" and result.get("reason") == "no_open_position":
+            return
+        detail = result.get("detail", "")
+        if alert.event != "entry":
+            detail = ", ".join(
+                f"{k}={v}" for k, v in result.items() if k not in ("status", "reason", "symbol", "detail")
+            )
+        journal.append_row(settings.tf_signals_file, journal.TF_SIGNAL_FIELDS, {
+            "time_utc": journal.now_utc(),
+            "symbol": alert.symbol,
+            "event": alert.event,
+            "trade_id": alert.trade_id,
+            "level": journal.entry_level_from(alert.level, alert.info) if alert.event == "entry" else (alert.level or ""),
+            "alert_entry": alert.entry if alert.entry is not None else "",
+            "alert_stop": alert.stop if alert.stop is not None else alert.new_stop if alert.new_stop is not None else "",
+            "status": result.get("status", ""),
+            "reason": result.get("reason", ""),
+            "quantity": result.get("quantity", result.get("sold", "")),
+            "fill_price": _r(result.get("fill_price")),
+            "bid": result.get("bid", ""),
+            "ask": result.get("ask", ""),
+            "spread_pct": _r(result.get("spread_pct")),
+            "spread_pct_of_risk": _r(result.get("spread_pct_of_risk")),
+            "slippage_pct_of_risk": _r(result.get("slippage_pct_of_risk")),
+            "detail": detail,
+            "info": (alert.info or "") if alert.event == "entry" else "",
+        })
+    except Exception:
+        logger.exception("Could not write the TF signal journal")
+
+
+async def _tf_mark_closed(state: TradeState, reason: str):
+    """The position is sold (or being sold). The state stays for a few seconds
+    so the fills can arrive, then manage_tf_positions writes the journal row."""
+    state.status = "journal_pending"
+    state.closed_at = journal.now_utc()
+    state.journal_reason = reason
+    await position_store.set(state.symbol, state)
+
+
+async def _tf_price_range(state: TradeState):
+    try:
+        contract = await ibkr_client.qualify_stock(
+            state.symbol, settings.default_exchange, settings.default_currency
+        )
+        return await ibkr_client.price_range(contract, datetime.fromisoformat(state.opened_at))
+    except Exception:
+        logger.warning("Could not read the price range for %s", state.symbol, exc_info=True)
+        return None, None
+
+
+async def _tf_finalize(state: TradeState, reason: str = ""):
+    """Writes the journal row of a finished TF trade, then drops its state.
+    Never raises: the journal must not get in the way of trading."""
+    try:
+        if state.opened_at:
+            _sync_fills(state)
+            reason = reason or state.journal_reason
+            if not reason:
+                sells = [f for f in state.fills if f.get("side") == "SLD"]
+                if not sells:
+                    reason = "keine Verkäufe gefunden"
+                elif state.stop_price and sells[-1]["price"] <= state.stop_price * 1.003:
+                    reason = f"stop ({state.stop_price})"
+                else:
+                    reason = "manuell oder unbekannt"
+            high, low = await _tf_price_range(state)
+            row = journal.tf_trade_row(
+                symbol=state.symbol,
+                trade_id=state.trade_id,
+                opened_utc=state.opened_at,
+                entry_level=state.entry_level,
+                alert_entry=state.alert_entry,
+                alert_stop=state.alert_stop,
+                fill_price=state.entry_price,
+                quantity=state.initial_quantity or state.quantity,
+                high=high,
+                low=low,
+                levels_hit=state.levels_hit,
+                exit_reason=reason,
+                fills=state.fills,
+                info=state.entry_info,
+                closed_utc=state.closed_at or None,
+            )
+            journal.append_row(settings.tf_trades_file, journal.TF_TRADE_FIELDS, row)
+            logger.info(
+                "TF journal %s level %s: net %s USD, %s R (%s)",
+                state.symbol, state.entry_level or "?", row["net_pnl_usd"], row["r_multiple"], reason,
+            )
+    except Exception:
+        logger.exception("Could not write the TF trade journal for %s", state.symbol)
+    finally:
+        cur = await position_store.get(state.symbol)
+        if cur and cur.trade_id == state.trade_id and cur.opened_at == state.opened_at:
+            await position_store.delete(state.symbol)
+
+
+async def manage_tf_positions():
+    """Called every few seconds: writes the journal row of TF trades that were
+    sold by an alert, and notices trades whose stop filled (IBKR never tells
+    the bot) by their position being gone."""
+    now = datetime.now(timezone.utc)
+    for state in await position_store.all_tf():
+        try:
+            if state.status == "journal_pending":
+                closed = datetime.fromisoformat(state.closed_at) if state.closed_at else now
+                if (now - closed).total_seconds() >= TF_JOURNAL_SETTLE_SECONDS:
+                    await _tf_finalize(state)
+            elif state.opened_at:
+                age = (now - datetime.fromisoformat(state.opened_at)).total_seconds()
+                if age < TF_MIN_AGE_BEFORE_CLOSE_CHECK_SECONDS:
+                    continue
+                pos = await ibkr_client.get_position(state.symbol)
+                if not pos or pos.position <= 0:
+                    logger.info("TF trade %s is no longer held (stop filled?)", state.symbol)
+                    await _tf_finalize(state)
+        except Exception:
+            logger.exception("TF journal check failed for %s", state.symbol)

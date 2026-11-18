@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from ib_async import CFD, IB, Forex, LimitOrder, MarketOrder, Order, Position, Stock, StopOrder, Trade
@@ -421,6 +422,22 @@ class IBKRClient:
                 logger.info("Moved order %s %s to %s", order_id, field, price)
                 return True
         return False
+
+    async def price_range(self, contract, since) -> tuple:
+        """Highest and lowest price of the 1-minute bars from `since` (aware
+        datetime) until now, for the TF journal. (None, None) without bars."""
+        await self.connect()
+        secs = max(120, int((datetime.now(timezone.utc) - since).total_seconds()) + 60)
+        duration = f"{secs} S" if secs <= 86400 else f"{-(-secs // 86400)} D"
+        bars = await asyncio.wait_for(
+            self.ib.reqHistoricalDataAsync(
+                contract, "", duration, "1 min", "TRADES", False, 2
+            ),
+            timeout=15,
+        )
+        if not bars:
+            return None, None
+        return max(b.high for b in bars), min(b.low for b in bars)
 
     async def open_order_ids(self) -> set[int]:
         await self.connect()

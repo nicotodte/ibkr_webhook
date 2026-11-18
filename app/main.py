@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
 from config import settings
 from handlers import (
@@ -16,9 +16,12 @@ from handlers import (
     handle_exit_all,
     handle_level,
     handle_stop_to_breakeven,
+    log_tf_signal,
     manage_doji_positions,
+    manage_tf_positions,
 )
 import journal
+import tf_report
 from ibkr_client import ibkr_client
 from models import BotAlert
 from state import position_store
@@ -32,6 +35,7 @@ logger = logging.getLogger("ibkr_webhook.main")
 
 FLATTEN_POLL_INTERVAL_SECONDS = 30
 FX_REFRESH_INTERVAL_SECONDS = 300
+TF_MONITOR_INTERVAL_SECONDS = 5
 
 
 async def _flatten_before_close_loop():
@@ -77,6 +81,18 @@ async def _doji_monitor_loop():
         await asyncio.sleep(settings.doji_monitor_interval_seconds)
 
 
+async def _tf_monitor_loop():
+    # Writes the journal row of finished TF trades (sold by an alert, or
+    # stopped out at IBKR). Skips passes while the gateway is down.
+    while True:
+        try:
+            if ibkr_client.ib.isConnected():
+                await manage_tf_positions()
+        except Exception:
+            logger.exception("Error in the TF journal monitor")
+        await asyncio.sleep(TF_MONITOR_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -86,7 +102,9 @@ async def lifespan(app: FastAPI):
     flatten_task = asyncio.create_task(_flatten_before_close_loop())
     fx_task = asyncio.create_task(_fx_refresh_loop())
     doji_task = asyncio.create_task(_doji_monitor_loop())
+    tf_task = asyncio.create_task(_tf_monitor_loop())
     yield
+    tf_task.cancel()
     flatten_task.cancel()
     fx_task.cancel()
     doji_task.cancel()
@@ -114,12 +132,18 @@ async def health():
     return {"status": "ok", "ib_connected": ibkr_client.ib.isConnected()}
 
 
+def journal_token() -> str:
+    # JOURNAL_TOKEN if set. Otherwise one derived from WEBHOOK_SECRET, so the
+    # journal pages work without another setting. It is not the secret itself
+    # (it only reads results and ends up in browser history), and nobody can
+    # get the secret back from it.
+    if settings.journal_token:
+        return settings.journal_token
+    return hmac.new(settings.webhook_secret.encode(), b"journal", "sha256").hexdigest()[:24]
+
+
 def _check_journal_token(token: str):
-    # Off unless JOURNAL_TOKEN is set. A separate token from WEBHOOK_SECRET:
-    # it only reads results and ends up in browser history.
-    if not settings.journal_token:
-        raise HTTPException(status_code=404, detail="Not found")
-    if not hmac.compare_digest(token or "", settings.journal_token):
+    if not hmac.compare_digest(token or "", journal_token()):
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
@@ -178,6 +202,53 @@ async def doji_signals_csv(token: str = ""):
     return FileResponse(settings.doji_signals_file, media_type="text/csv", filename="doji_signals.csv")
 
 
+@app.get("/tf/stats")
+async def tf_stats(token: str = ""):
+    """Win rate, P&L and R of the closed TF trades, per entry level and total."""
+    _check_journal_token(token)
+    trades = journal.read_all(settings.tf_trades_file)
+    signals = journal.read_all(settings.tf_signals_file)
+    reasons: dict[str, int] = {}
+    for row in signals:
+        if row.get("event") != "entry":
+            continue
+        key = row.get("status", "") + (": " + row["reason"] if row.get("reason") else "")
+        reasons[key] = reasons.get(key, 0) + 1
+    return {"closed_trades": journal.tf_stats(trades), "entry_signals": reasons}
+
+
+@app.get("/tf/report", response_class=HTMLResponse)
+async def tf_report_page(token: str = ""):
+    """The TF trade journal as a readable page."""
+    _check_journal_token(token)
+    open_trades = [
+        {"symbol": t.symbol, "opened_at": t.opened_at, "entry_level": t.entry_level,
+         "quantity": t.quantity, "entry": t.entry_price, "stop": t.stop_price, "levels_hit": t.levels_hit}
+        for t in await position_store.all_open() if t.strategy == "tf"
+    ]
+    return tf_report.render(
+        journal.read_all(settings.tf_trades_file),
+        journal.read_all(settings.tf_signals_file),
+        open_trades,
+    )
+
+
+@app.get("/tf/trades.csv")
+async def tf_trades_csv(token: str = ""):
+    _check_journal_token(token)
+    if not os.path.exists(settings.tf_trades_file):
+        raise HTTPException(status_code=404, detail="No TF trades recorded yet")
+    return FileResponse(settings.tf_trades_file, media_type="text/csv", filename="tf_trades.csv")
+
+
+@app.get("/tf/signals.csv")
+async def tf_signals_csv(token: str = ""):
+    _check_journal_token(token)
+    if not os.path.exists(settings.tf_signals_file):
+        raise HTTPException(status_code=404, detail="No TF signals recorded yet")
+    return FileResponse(settings.tf_signals_file, media_type="text/csv", filename="tf_signals.csv")
+
+
 _background: set = set()
 
 
@@ -220,9 +291,12 @@ async def webhook(request: Request):
         return {"status": "accepted", "symbol": alert.symbol, "event": "doji"}
 
     try:
-        return await EVENT_HANDLERS[alert.event](alert)
+        result = await EVENT_HANDLERS[alert.event](alert)
+        log_tf_signal(alert, result)
+        return result
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("Handling alert failed: event=%s symbol=%s", alert.event, alert.symbol)
+        log_tf_signal(alert, {"status": "error", "detail": str(exc)[:300]})
         raise HTTPException(status_code=502, detail=f"Order handling failed: {exc}") from exc

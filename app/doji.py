@@ -70,6 +70,37 @@ def entry_limit(entry: float, stop: float, cap_pct_of_risk: float) -> float:
     return floor_cent(entry + cap_pct_of_risk / 100 * (entry - stop))
 
 
+def buy_limit(entry: float, stop: float, ask: float, cap_pct_of_risk: float, above_ask_pct_of_risk: float = 10.0) -> tuple[float, float]:
+    """(limit price, price to size from) for a Doji buy.
+
+    The limit is a little above the ask (above_ask_pct_of_risk of the alert's
+    risk), never above entry + cap_pct_of_risk of it. Sizing from the limit
+    keeps the dollar risk within the budget whatever the fill; the ask buffer
+    is small, so a normal fill uses ~90 % of the budget. Sizing never uses a
+    price below entry - half the risk: a fill that low would otherwise get a
+    huge position for a doji that is already failing.
+    """
+    r = entry - stop
+    limit = min(entry_limit(entry, stop, cap_pct_of_risk), floor_cent(ask + above_ask_pct_of_risk / 100 * r))
+    return limit, max(limit, entry - 0.5 * r)
+
+
+class Breadth:
+    """Counts Doji alerts of OTHER symbols in the last window_seconds. Many
+    Dojis at once = a broad sell-off that turns (16./17.11.: >= 6 in 10 min
+    won 18 of 20); a lone Doji is mostly stock-specific and goes on falling."""
+
+    def __init__(self, window_seconds: float = 600.0):
+        self.window = window_seconds
+        self.seen: list[tuple[float, str]] = []
+
+    def add(self, now: float, symbol: str) -> int:
+        self.seen = [(t, s) for t, s in self.seen if now - t <= self.window]
+        n = len({s for t, s in self.seen if s != symbol})
+        self.seen.append((now, symbol))
+        return n
+
+
 def target_prices(entry: float, risk: float) -> list[float]:
     return [ceil_cent(entry + r * risk) for r in TARGETS_R]
 
