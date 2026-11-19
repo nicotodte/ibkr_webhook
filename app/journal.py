@@ -276,8 +276,13 @@ def entry_level_from(level: Optional[str], info: Optional[str]) -> str:
     if level:
         return str(level)
     import re
-    m = re.match(r"\s*TF\s+(\d+(?:\.\d+)?)", info or "")
-    return m.group(1) if m else ""
+    # "TF 0.95 R: ...", "TF ALT: 0.975 R: ..." and "TF ALT2: 0.975 R: ..." are
+    # the labels of the script's entries; the ALT variants keep their own name
+    # so the review can tell them apart from the plain 0.975.
+    m = re.match(r"\s*TF\s+(?:(ALT\d*):\s*)?(\d+(?:\.\d+)?)", info or "")
+    if not m:
+        return ""
+    return m.group(2) + (" " + m.group(1) if m.group(1) else "")
 
 
 def tf_trade_row(

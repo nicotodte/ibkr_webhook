@@ -67,6 +67,8 @@ class EntryLevel(unittest.TestCase):
     def test_from_level_or_info(self):
         self.assertEqual(journal.entry_level_from("0.9", "TF 0.95 R: 1"), "0.9")
         self.assertEqual(journal.entry_level_from(None, "TF 0.975 R: 1.2 SL: 99 QTY: 83 | Chart 15"), "0.975")
+        self.assertEqual(journal.entry_level_from(None, "TF ALT2: 0.975 R: 0.67 SL: 134.99  QTY: 119 | Chart 15"), "0.975 ALT2")
+        self.assertEqual(journal.entry_level_from(None, "TF ALT: 0.975 R: 1"), "0.975 ALT")
         self.assertEqual(journal.entry_level_from(None, None), "")
         self.assertEqual(journal.entry_level_from(None, "Doji W 0.95"), "")
 
