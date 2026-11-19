@@ -36,6 +36,20 @@ class DelayedMarketDataError(RuntimeError):
     """Raised when IBKR is only offering delayed/frozen data for a contract."""
 
 
+def _forget_quote(ticker) -> None:
+    """ib_async keeps a Ticker per contract after its data line is cancelled,
+    with the last prices still in it. A new request on that symbol would read
+    those at once: MSTR 19.11. 18:07 saw the 88.73 of its first trade at 16:35
+    instead of ~86.1 and was rejected as 'price ran away' -- the day's best
+    Doji (+9 R). So the old prices are cleared and only fresh ticks count."""
+    nan = float("nan")
+    for f in ("bid", "ask", "last", "bidSize", "askSize", "lastSize"):
+        try:
+            setattr(ticker, f, nan)
+        except Exception:
+            pass
+
+
 def _has_quote(ticker) -> bool:
     return bool(ticker.bid and ticker.ask and ticker.bid > 0 and ticker.ask > 0)
 
@@ -127,6 +141,7 @@ class IBKRClient:
         """
         await self.connect()
         ticker = self.ib.reqMktData(contract, "", False, False)
+        _forget_quote(ticker)
         ticker.marketDataType = UNREPORTED_MARKET_DATA_TYPE
         try:
             waited = 0.0
@@ -452,6 +467,7 @@ class IBKRClient:
         ticker = self._streams.get(key)
         if ticker is None:
             ticker = self.ib.reqMktData(contract, "", False, False)
+            _forget_quote(ticker)
             self._streams[key] = ticker
         return ticker
 
