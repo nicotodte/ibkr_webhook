@@ -80,13 +80,37 @@ class CsvAndStats(unittest.TestCase):
             self.assertEqual(s["orange"]["trades"], 2)
             self.assertEqual(s["green"]["avg_r"], 5.4)
 
-    def test_changed_columns_start_a_new_file(self):
+    def test_changed_columns_keep_the_history_in_one_file(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "s.csv")
             journal.append_row(path, ["a", "b"], {"a": 1, "b": 2})
-            journal.append_row(path, ["a", "b", "c"], {"a": 1, "b": 2, "c": 3})
-            self.assertEqual(journal.read_rows(path), [{"a": "1", "b": "2", "c": "3"}])
-            self.assertEqual(len([f for f in os.listdir(d) if f.endswith(".old")]), 1)
+            journal.append_row(path, ["a", "b"], {"a": 3, "b": 4})
+            journal.append_row(path, ["a", "b", "c"], {"a": 5, "b": 6, "c": 7})
+            expected = [
+                {"a": "1", "b": "2", "c": ""},
+                {"a": "3", "b": "4", "c": ""},
+                {"a": "5", "b": "6", "c": "7"},
+            ]
+            self.assertEqual(journal.read_rows(path), expected)
+            # read_all must not count the backup a second time.
+            self.assertEqual(journal.read_all(path), expected)
+            baks = [f for f in os.listdir(d) if f.endswith(".bak")]
+            self.assertEqual(len(baks), 1)
+            self.assertEqual(len(journal.read_rows(os.path.join(d, baks[0]))), 2)
+            self.assertFalse(any(f.endswith((".old", ".tmp")) for f in os.listdir(d)))
+
+    def test_old_rows_get_no_stand_when_the_stand_column_arrives(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "s.csv")
+            journal.append_row(path, ["a"], {"a": 1})
+            journal.set_stand("abcd1234")
+            try:
+                journal.append_row(path, ["a", "stand"], {"a": 2})
+            finally:
+                journal.set_stand("")
+            self.assertEqual(journal.read_rows(path), [
+                {"a": "1", "stand": ""}, {"a": "2", "stand": "abcd1234"},
+            ])
 
     def test_missing_file(self):
         self.assertEqual(journal.read_rows("/nonexistent/x.csv"), [])

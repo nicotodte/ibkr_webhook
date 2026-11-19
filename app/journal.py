@@ -10,6 +10,7 @@ No IBKR or config imports, so it can be tested on its own.
 """
 import csv
 import os
+import shutil
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -49,16 +50,31 @@ def append_row(path: str, fields: list, row: dict) -> None:
         with open(path, newline="", encoding="utf-8") as fh:
             header = next(csv.reader(fh), [])
         if header != fields:
-            # Columns changed with an update: keep the old file aside rather
-            # than appending rows that no longer match its header.
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-            os.replace(path, f"{path}.{stamp}.old")
+            _migrate(path, fields)
     new = not os.path.exists(path) or os.path.getsize(path) == 0
     with open(path, "a", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
         if new:
             w.writeheader()
         w.writerow(row)
+
+
+def _migrate(path: str, fields: list) -> None:
+    """Columns changed with an update: rewrite the file under the new header,
+    so the history stays in the one table that stats, reports and downloads
+    read. Old rows get empty new columns (an empty Stand counts as "vorher").
+    The file as it was is kept next to it as .bak, which also holds any
+    column that was dropped. Not .old: read_all would count it twice."""
+    old_rows = read_rows(path)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    shutil.copy2(path, f"{path}.{stamp}.bak")
+    tmp = path + ".tmp"
+    with open(tmp, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
+        w.writeheader()
+        for r in old_rows:
+            w.writerow({k: v for k, v in r.items() if k is not None})
+    os.replace(tmp, path)
 
 
 def read_rows(path: str) -> list:
