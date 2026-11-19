@@ -101,7 +101,27 @@ def _stats_rows(stats: dict) -> list:
     return rows
 
 
-def render(trades: list, signals: list, open_trades: list) -> str:
+def _stand_rows(trades: list, versions: list) -> list:
+    """One row per Stand of the bot: when it started, what changed, how the
+    trades under it did."""
+    stats = journal.stats_by_stand(trades)
+    rows = []
+    for v in versions:
+        b = stats.get(v.get("stand"), journal.bucket([]))
+        change = v.get("settings_changes", "")
+        if v.get("code_changed") == "ja" and change != "erster Eintrag":
+            change = ("Programm geändert; " + change).rstrip("; ")
+        rows.append([
+            (v.get("stand", ""), ""), (_local(v.get("first_seen_utc", "")), ""), (change, ""),
+            (b["trades"], ""),
+            (_num(b["win_rate_pct"], 0) + " %" if b["win_rate_pct"] is not None else "", ""),
+            (_num(b["sum_r"]), _cls(b["sum_r"])), (_num(b["net_pnl_usd"]), _cls(b["net_pnl_usd"])),
+        ])
+    return list(reversed(rows))
+
+
+def render(trades: list, signals: list, open_trades: list, versions: Optional[list] = None,
+           current_stand: str = "") -> str:
     entries = [s for s in signals if s.get("event") == "entry"]
     skipped = [s for s in entries if s.get("status") != "submitted"]
     reasons: dict = {}
@@ -112,6 +132,11 @@ def render(trades: list, signals: list, open_trades: list) -> str:
     stats_html = _table(
         ["", "Trades", "gewonnen / verloren / null", "Trefferquote", "Gewinn netto $", "Summe R", "Schnitt R"],
         _stats_rows(journal.tf_stats(trades)),
+    )
+
+    stand_html = _table(
+        ["Stand", "seit", "Was sich geändert hat", "Trades", "Trefferquote", "Summe R", "Gewinn netto $"],
+        _stand_rows(trades, versions or []),
     )
 
     open_html = _table(
@@ -132,10 +157,11 @@ def render(trades: list, signals: list, open_trades: list) -> str:
             (_num(t.get("net_pnl_usd")), _cls(t.get("r_multiple"))),
             (_num(t.get("r_multiple")), _cls(t.get("r_multiple"))),
             (t.get("result", ""), _cls(t.get("r_multiple"))),
+            (t.get("stand", "") or "vorher", ""),
         ])
     trades_html = _table(
         ["Gekauft", "Aktie", "Level", "Stück", "Einstieg (echt)", "Stop", "Abweichung zum Signal",
-         "höchster Kurs (R)", "tiefster Kurs (R)", "erreichte Level", "Ausstieg", "Gewinn netto $", "R", "Ergebnis"],
+         "höchster Kurs (R)", "tiefster Kurs (R)", "erreichte Level", "Ausstieg", "Gewinn netto $", "R", "Ergebnis", "Stand"],
         trade_rows,
     )
 
@@ -171,6 +197,11 @@ th,td{{padding:4px 10px;border-bottom:1px solid var(--line);text-align:left}}th{
 <p class=muted>Alle Zeiten Berliner Zeit. R = Vielfaches des Risikos (1 R = Einstieg minus Stop, mal Stückzahl).
 Ergebnis: gewonnen ab +0,1 R, verloren ab -0,1 R, sonst null. Gewinn ist nach Kommission.</p>
 <h2>Gesamtbild</h2>{stats_html}
+<h2>Versionen des Bots</h2>
+<p class=muted>Jede Änderung am Programm oder an den Einstellungen bekommt einen neuen Stand. Jeder Trade ist
+dem Stand zugeordnet, unter dem er gekauft wurde. So siehst du, ob es nach einer Änderung besser oder schlechter lief.
+Aktueller Stand: {escape(current_stand) or "unbekannt"}</p>
+{stand_html}
 <h2>Jetzt offen</h2>{open_html}
 <h2>Abgeschlossene Trades</h2>{trades_html}
 <h2>Warum Signale nicht gekauft wurden</h2>{why_html}

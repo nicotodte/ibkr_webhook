@@ -49,6 +49,8 @@ class TradeState:
     levels_hit: list = field(default_factory=list)
     closed_at: str = ""
     journal_reason: str = ""
+    # Stand of the bot (stand.py) that opened this trade, for the journals.
+    stand: str = ""
 
 
 DOJI_KEY_PREFIX = "DOJI:"

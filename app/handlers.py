@@ -216,6 +216,7 @@ async def handle_entry(alert: BotAlert) -> dict:
             initial_quantity=filled_qty,
             entry_level=journal.entry_level_from(alert.level, alert.info),
             entry_info=alert.info or "",
+            stand=journal.STAND,
         ),
     )
 
@@ -684,6 +685,7 @@ async def _handle_doji(alert: BotAlert, breadth: int = 0) -> dict:
         alert_stop=alert.stop,
         initial_quantity=filled_qty,
         low_water=fill,
+        stand=journal.STAND,
     )
     _sync_fills(state)
     await position_store.set(key, state)
@@ -910,6 +912,7 @@ def _journal_close(state: TradeState, reason: str):
             exit_reason=reason,
             fills=state.fills,
         )
+        row["stand"] = state.stand
         journal.append_row(settings.doji_trades_file, journal.TRADE_FIELDS, row)
         logger.info(
             "Doji journal %s %s: net %.2f USD, %s R (%s)",
@@ -1013,6 +1016,7 @@ async def _tf_finalize(state: TradeState, reason: str = ""):
                 fills=state.fills,
                 info=state.entry_info,
                 closed_utc=state.closed_at or None,
+                stand=state.stand,
             )
             journal.append_row(settings.tf_trades_file, journal.TF_TRADE_FIELDS, row)
             logger.info(

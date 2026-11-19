@@ -48,7 +48,11 @@ services:
       IB_PORT: ${IB_PORT:-4004}
       STATE_FILE: /data/positions.json
     volumes:
-      - webhook_state:/data
+      # A fixed folder on the server instead of a Docker volume: a volume
+      # belongs to the project and is deleted with it, this folder is not.
+      # The journals (signals, trades, versions) and the open positions live
+      # here and survive deleting and re-adding the project in Hostinger.
+      - /opt/ibkr_webhook_data:/data
     depends_on:
       - ib-gateway
     expose:
@@ -64,6 +68,3 @@ services:
 
 networks:
   ibkr_net:
-
-volumes:
-  webhook_state:

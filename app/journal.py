@@ -16,7 +16,7 @@ from typing import Optional
 SIGNAL_FIELDS = [
     "time_utc", "symbol", "tier", "trade_id", "alert_entry", "alert_stop",
     "status", "reason", "quantity", "bid", "ask", "spread_pct",
-    "spread_pct_of_risk", "slippage_pct_of_risk", "detail", "breadth", "risk_usd", "level", "info",
+    "spread_pct_of_risk", "slippage_pct_of_risk", "detail", "breadth", "risk_usd", "level", "info", "stand",
 ]
 
 TRADE_FIELDS = [
@@ -24,8 +24,17 @@ TRADE_FIELDS = [
     "alert_entry", "alert_stop", "fill_price", "initial_stop", "risk_per_share",
     "quantity", "planned_risk_usd", "high", "low", "max_r", "min_r",
     "reached_trail", "exit_reason", "sold_quantity", "avg_exit_price",
-    "pnl_usd", "commission_usd", "net_pnl_usd", "r_multiple",
+    "pnl_usd", "commission_usd", "net_pnl_usd", "r_multiple", "stand",
 ]
+
+
+# The Stand (see stand.py) written into every row that has a "stand" column.
+STAND = ""
+
+
+def set_stand(value: str) -> None:
+    global STAND
+    STAND = value
 
 
 def now_utc() -> str:
@@ -33,6 +42,8 @@ def now_utc() -> str:
 
 
 def append_row(path: str, fields: list, row: dict) -> None:
+    if "stand" in fields and not row.get("stand"):
+        row = {**row, "stand": STAND}
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     if os.path.exists(path) and os.path.getsize(path) > 0:
         with open(path, newline="", encoding="utf-8") as fh:
@@ -250,7 +261,7 @@ def read_all(path: str) -> list:
 TF_SIGNAL_FIELDS = [
     "time_utc", "symbol", "event", "trade_id", "level", "alert_entry", "alert_stop",
     "status", "reason", "quantity", "fill_price", "bid", "ask", "spread_pct",
-    "spread_pct_of_risk", "slippage_pct_of_risk", "detail", "info",
+    "spread_pct_of_risk", "slippage_pct_of_risk", "detail", "info", "stand",
 ]
 
 TF_TRADE_FIELDS = [
@@ -258,8 +269,11 @@ TF_TRADE_FIELDS = [
     "alert_entry", "alert_stop", "fill_price", "entry_slippage_pct",
     "risk_per_share", "quantity", "risk_usd", "high", "low", "max_r", "min_r",
     "levels_hit", "exit_reason", "sold_quantity", "avg_exit_price",
-    "pnl_usd", "commission_usd", "net_pnl_usd", "r_multiple", "result", "info",
+    "pnl_usd", "commission_usd", "net_pnl_usd", "r_multiple", "result", "info", "stand",
 ]
+
+# Texts the bot ignores (Achtung / HOLD / K=0 of the Longterm script), kept for later review.
+OTHER_ALERT_FIELDS = ["time_utc", "text", "stand"]
 
 
 def result_label(r_multiple) -> str:
@@ -302,6 +316,7 @@ def tf_trade_row(
     fills: list,
     info: str = "",
     closed_utc: Optional[str] = None,
+    stand: str = "",
 ) -> dict:
     risk = fill_price - alert_stop
     sells = [f for f in fills if f.get("side") == "SLD"]
@@ -339,6 +354,7 @@ def tf_trade_row(
         "r_multiple": r_mult,
         "result": result_label(r_mult) if sold else "",
         "info": info,
+        "stand": stand,
     }
 
 
@@ -348,3 +364,11 @@ def tf_stats(rows: list) -> dict:
     for level in sorted({x.get("entry_level") or "?" for x in rows}):
         out[level] = bucket([x for x in rows if (x.get("entry_level") or "?") == level])
     return out
+
+
+def stats_by_stand(rows: list) -> dict:
+    """One bucket per Stand of the bot, in the order the Stände first appear."""
+    out: dict = {}
+    for r in rows:
+        out.setdefault(r.get("stand") or "vorher", []).append(r)
+    return {k: bucket(v) for k, v in out.items()}

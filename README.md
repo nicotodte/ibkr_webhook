@@ -116,6 +116,23 @@ Monitor daran erkannt, dass die Position weg ist.
 - `https://DOMAIN/tf/stats?token=…` — dieselben Zahlen als JSON
 - `https://DOMAIN/tf/trades.csv?token=…` und `…/tf/signals.csv?token=…` — Rohdaten
 
+**Daten bleiben erhalten:** Der Ordner `/data` (Protokolle und offene Positionen)
+liegt auf dem Server unter `/opt/ibkr_webhook_data` (siehe `docker-compose.yml`)
+und nicht mehr in einem Docker-Volume. Ein Volume gehört zum Projekt und wird
+beim Löschen in Hostinger mitgelöscht, der Ordner nicht. Zusätzlich sollten vor
+jedem Löschen die CSV-Dateien heruntergeladen werden.
+
+**Stände des Bots:** Beim Start berechnet der Bot einen kurzen Code (Stand) aus
+seinen Programmdateien und allen Einstellungen außer den Geheimnissen. Jede Zeile
+in `doji_signals.csv`, `doji_trades.csv`, `tf_signals.csv` und `tf_trades.csv`
+trägt den Stand, unter dem sie entstanden ist (Trades den Stand beim Kauf).
+`/data/versions.csv` (`https://DOMAIN/versions.csv?token=…`) listet jeden Stand
+mit Startzeit, „Programm geändert“ und den geänderten Einstellungen. `/health`
+zeigt den aktuellen Stand, `/tf/report` die Ergebnisse je Stand, `/tf/stats` und
+`/doji/stats` enthalten `by_stand`. So lässt sich vergleichen, ob es nach einer
+Änderung besser oder schlechter lief. `/data/other_alerts.csv` hält die Texte
+fest, die der Bot ignoriert (Achtung, HOLD, K=0).
+
 Der Listenalarm des Longterm-Skripts schickt auch seine Achtung/HOLD/K=0-
 Texte an den Webhook; alles, was nicht mit `{` beginnt, ignoriert der Bot.
 

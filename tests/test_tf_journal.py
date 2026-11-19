@@ -96,6 +96,10 @@ class Stats(unittest.TestCase):
 class Report(unittest.TestCase):
     def test_renders_with_and_without_data(self):
         self.assertIn("Noch nichts", tf_report.render([], [], []))
+        versions = [{"first_seen_utc": "2026-11-19T23:29:00+00:00", "stand": "abc12345", "code_hash": "x",
+                     "code_changed": "ja", "settings_changes": "max_spread_pct: 0.05 -> 0.15"}]
+        html_v = tf_report.render([{"stand": "abc12345", "r_multiple": "1", "net_pnl_usd": "10"}], [], [], versions, "abc12345")
+        self.assertIn("Programm geändert; max_spread_pct: 0.05 -&gt; 0.15", html_v)
         trade = {"opened_utc": "2026-11-12T14:30:00+00:00", "symbol": "NVS", "entry_level": "0.95",
                  "quantity": "100", "fill_price": "100", "alert_stop": "99", "entry_slippage_pct": "0.1",
                  "max_r": "3", "min_r": "-0.4", "levels_hit": "0.786", "exit_reason": "exit_all",

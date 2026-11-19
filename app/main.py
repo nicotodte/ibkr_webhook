@@ -21,6 +21,7 @@ from handlers import (
     manage_tf_positions,
 )
 import journal
+import stand
 import tf_report
 from ibkr_client import ibkr_client
 from models import BotAlert
@@ -96,6 +97,13 @@ async def _tf_monitor_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
+        journal.set_stand(stand.register(
+            settings.versions_file, os.path.dirname(os.path.abspath(__file__)), settings.model_dump()
+        ))
+        logger.info("Bot Stand %s (listed in %s)", journal.STAND, settings.versions_file)
+    except Exception:
+        logger.exception("Could not record the Stand of the bot")
+    try:
         await ibkr_client.connect()
     except Exception:
         logger.exception("Could not connect to IB Gateway at startup, will retry on first request")
@@ -129,7 +137,7 @@ async def health():
             await ibkr_client.connect()
         except Exception:
             logger.warning("Health check: IB Gateway still unreachable", exc_info=True)
-    return {"status": "ok", "ib_connected": ibkr_client.ib.isConnected()}
+    return {"status": "ok", "ib_connected": ibkr_client.ib.isConnected(), "stand": journal.STAND}
 
 
 def journal_token() -> str:
@@ -164,6 +172,7 @@ async def doji_stats(token: str = ""):
     ]
     return {
         "closed_trades": journal.stats(trades),
+        "by_stand": journal.stats_by_stand(journal.read_all(settings.doji_trades_file)),
         "signals": {"total": len(signals), "by_outcome": reasons},
         "open_trades": open_trades,
     }
@@ -202,6 +211,15 @@ async def doji_signals_csv(token: str = ""):
     return FileResponse(settings.doji_signals_file, media_type="text/csv", filename="doji_signals.csv")
 
 
+@app.get("/versions.csv")
+async def versions_csv(token: str = ""):
+    """Every Stand of the bot (code + settings) with what changed."""
+    _check_journal_token(token)
+    if not os.path.exists(settings.versions_file):
+        raise HTTPException(status_code=404, detail="No versions recorded yet")
+    return FileResponse(settings.versions_file, media_type="text/csv", filename="versions.csv")
+
+
 @app.get("/tf/stats")
 async def tf_stats(token: str = ""):
     """Win rate, P&L and R of the closed TF trades, per entry level and total."""
@@ -214,7 +232,12 @@ async def tf_stats(token: str = ""):
             continue
         key = row.get("status", "") + (": " + row["reason"] if row.get("reason") else "")
         reasons[key] = reasons.get(key, 0) + 1
-    return {"closed_trades": journal.tf_stats(trades), "entry_signals": reasons}
+    return {
+        "stand": journal.STAND,
+        "closed_trades": journal.tf_stats(trades),
+        "by_stand": journal.stats_by_stand(trades),
+        "entry_signals": reasons,
+    }
 
 
 @app.get("/tf/report", response_class=HTMLResponse)
@@ -230,6 +253,8 @@ async def tf_report_page(token: str = ""):
         journal.read_all(settings.tf_trades_file),
         journal.read_all(settings.tf_signals_file),
         open_trades,
+        journal.read_rows(settings.versions_file),
+        journal.STAND,
     )
 
 
@@ -266,7 +291,14 @@ async def webhook(request: Request):
     if not raw_body.lstrip().startswith(b"{"):
         # The Longterm script's list alert sends its Achtung/HOLD/K=0 texts to
         # the same webhook as the Doji JSON. They are meant for the phone only.
-        logger.info("Ignoring non-JSON alert text: %.80s", raw_body.decode("utf-8", "replace"))
+        text = raw_body.decode("utf-8", "replace")
+        logger.info("Ignoring non-JSON alert text: %.80s", text)
+        try:
+            journal.append_row(settings.other_alerts_file, journal.OTHER_ALERT_FIELDS, {
+                "time_utc": journal.now_utc(), "text": text.strip()[:400].replace("\n", " | "),
+            })
+        except Exception:
+            logger.exception("Could not write the ignored-alerts journal")
         return {"status": "ignored", "reason": "not_json"}
     try:
         alert = BotAlert.model_validate_json(raw_body)
