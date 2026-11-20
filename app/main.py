@@ -21,6 +21,7 @@ from handlers import (
     manage_tf_positions,
 )
 import journal
+import mr_shadow
 import stand
 import tf_report
 from ibkr_client import ibkr_client
@@ -37,6 +38,7 @@ logger = logging.getLogger("ibkr_webhook.main")
 FLATTEN_POLL_INTERVAL_SECONDS = 30
 FX_REFRESH_INTERVAL_SECONDS = 300
 TF_MONITOR_INTERVAL_SECONDS = 5
+MR_POLL_INTERVAL_SECONDS = 20
 
 
 async def _flatten_before_close_loop():
@@ -94,6 +96,18 @@ async def _tf_monitor_loop():
         await asyncio.sleep(TF_MONITOR_INTERVAL_SECONDS)
 
 
+async def _mr_shadow_loop():
+    # Index mean reversion, signal logging only (no orders): checks once a
+    # day shortly before the close. Skips passes while the gateway is down.
+    while True:
+        try:
+            if ibkr_client.ib.isConnected():
+                await mr_shadow.run_if_due()
+        except Exception:
+            logger.exception("Error in the MR signal log")
+        await asyncio.sleep(MR_POLL_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -111,7 +125,9 @@ async def lifespan(app: FastAPI):
     fx_task = asyncio.create_task(_fx_refresh_loop())
     doji_task = asyncio.create_task(_doji_monitor_loop())
     tf_task = asyncio.create_task(_tf_monitor_loop())
+    mr_task = asyncio.create_task(_mr_shadow_loop())
     yield
+    mr_task.cancel()
     tf_task.cancel()
     flatten_task.cancel()
     fx_task.cancel()
@@ -272,6 +288,30 @@ async def tf_signals_csv(token: str = ""):
     if not os.path.exists(settings.tf_signals_file):
         raise HTTPException(status_code=404, detail="No TF signals recorded yet")
     return FileResponse(settings.tf_signals_file, media_type="text/csv", filename="tf_signals.csv")
+
+
+@app.get("/mr/stats")
+async def mr_stats(token: str = ""):
+    """Index mean reversion, signals only: what would have been invested and
+    what came of it, after IBKR fees, spread and financing."""
+    _check_journal_token(token)
+    return mr_shadow.stats()
+
+
+@app.get("/mr/trades.csv")
+async def mr_trades_csv(token: str = ""):
+    _check_journal_token(token)
+    if not os.path.exists(settings.mr_trades_file):
+        raise HTTPException(status_code=404, detail="No MR trades recorded yet")
+    return FileResponse(settings.mr_trades_file, media_type="text/csv", filename="mr_trades.csv")
+
+
+@app.get("/mr/signals.csv")
+async def mr_signals_csv(token: str = ""):
+    _check_journal_token(token)
+    if not os.path.exists(settings.mr_signals_file):
+        raise HTTPException(status_code=404, detail="No MR checks recorded yet")
+    return FileResponse(settings.mr_signals_file, media_type="text/csv", filename="mr_signals.csv")
 
 
 _background: set = set()

@@ -156,6 +156,24 @@ class Settings(BaseSettings):
     versions_file: str = "/data/versions.csv"
     other_alerts_file: str = "/data/other_alerts.csv"
 
+    # Index mean reversion ("MR"), SIGNAL LOGGING ONLY -- never sends an order.
+    # A few minutes before the close the bot checks MR_SYMBOLS against the
+    # RSI(2) rule (mr_logic.py) and books what it would have done at the real
+    # bid/ask, with the commission IBKR quotes in a what-if preview (never
+    # executed). Results: /mr/stats, /mr/trades.csv, /mr/signals.csv.
+    mr_shadow_enabled: bool = True
+    mr_symbols: str = "SPY,QQQ,IWM,DIA"
+    mr_instrument: Literal["CFD", "STK"] = "CFD"
+    mr_notional_usd: float = 25000.0
+    mr_minutes_before_close: int = 5
+    mr_use_whatif: bool = True
+    # CFD financing per year on the position value, for each night held
+    # (IBKR: benchmark rate + spread; an estimate, check IBKR's CFD page).
+    mr_cfd_financing_pct_year: float = 5.0
+    mr_signals_file: str = "/data/mr_signals.csv"
+    mr_trades_file: str = "/data/mr_trades.csv"
+    mr_state_file: str = "/data/mr_shadow.json"
+
     # Where open-position state (symbol -> trade_id/qty/stop order) is
     # persisted so it survives a webhook container restart.
     state_file: str = "/data/positions.json"
