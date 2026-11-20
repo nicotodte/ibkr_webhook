@@ -266,9 +266,10 @@ def reason_text(s: dict) -> str:
     return from_app.reason_de(reason) if from_app and reason else (reason or s["status"])
 
 
-def build_report(sigs: list, trade_rows: list, since: str, until: str, versions: list) -> str:
+def build_report(sigs: list, trade_rows: list, since: str, until: str, versions: list,
+                 title: str = "TF-Wochenauswertung") -> str:
     w = []
-    w.append(f"# TF-Wochenauswertung {since} bis {until}\n")
+    w.append(f"# {title} {since} bis {until}\n")
     judged = [s for s in sigs if s["r"] is not None]
     w.append(f"{len(sigs)} Einstiegs-Signale, davon {sum(1 for s in sigs if s['bought'])} vom Bot gekauft, "
              f"{len(judged)} mit Kursen nachgespielt. Kleine Zahlen: unter etwa 30 Signalen je Zeile ist "
@@ -373,6 +374,7 @@ def main(argv=None):
     ap.add_argument("--dir", default="", help="read tf_signals.csv etc. from this folder instead of the server")
     ap.add_argument("--days", type=float, default=7.0)
     ap.add_argument("--out", default="")
+    ap.add_argument("--title", default="TF-Wochenauswertung", help="heading of the report")
     a = ap.parse_args(argv)
     if not a.dir and not a.token:
         ap.error("--token (oder JOURNAL_TOKEN) oder --dir angeben")
@@ -395,7 +397,7 @@ def main(argv=None):
         return cache[symbol]
 
     sigs = build_signals(signals, ladder, trades, bars_for)
-    report = build_report(sigs, trades, since, until, versions)
+    report = build_report(sigs, trades, since, until, versions, a.title)
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:
             fh.write(report)
