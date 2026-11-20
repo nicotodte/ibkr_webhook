@@ -197,6 +197,9 @@ def build_signals(signal_rows: list, ladder_rows: list, trade_rows: list, bars_f
             "bought": r.get("status") == "submitted",
             "real_r": float_or_none(t.get("r_multiple")) if t else None,
             "ladder_events": len(ladder.get(key, [])),
+            # Ladder alerts that reached the bot BEFORE this entry alert: the bot
+            # would ignore them (no position yet), so a breakeven stop could be lost.
+            "ladder_before": sum(1 for e in ladder.get(key, []) if e["ts"] < ts),
         })
     return out
 
@@ -356,6 +359,13 @@ def build_report(sigs: list, trade_rows: list, since: str, until: str, versions:
           fmt(None if s["r"] is None else round(s["r"], 2)), s["exit"]] for s in sorted(sigs, key=lambda x: x["time"])]))
     w.append("„Höchster Kurs (R)“: wie weit der Kurs bis zum Ausstieg über den Einstieg lief, in Vielfachen des Risikos "
              "(1 R = Einstieg minus Stop).\n")
+    early = [s for s in sigs if s["ladder_before"]]
+    w.append("## 8. Leiter-Alarme vor dem Einstiegs-Alarm (Beobachtung)\n")
+    w.append(f"Bei {len(early)} von {len(sigs)} Einstiegs-Signalen kam mindestens ein Leiter-Alarm (z. B. \"Stop auf "
+             f"Einstieg\") VOR dem Einstiegs-Alarm an. Der Bot ignoriert so einen Alarm, weil noch keine Position offen "
+             f"ist; bei einem gekauften Trade würde dann der Stop nicht auf den Einstieg ziehen.\n")
+    w.append(table(["Aktie", "Level", "Gekauft", "Alarme davor"],
+                   [[s["symbol"], s["level"], "ja" if s["bought"] else "nein", s["ladder_before"]] for s in early]))
     miss = [s for s in sigs if s["r"] is None]
     if miss:
         w.append(f"Nicht nachspielbar (keine Kurse oder Stop nicht unter Einstieg): {len(miss)} Signale.\n")

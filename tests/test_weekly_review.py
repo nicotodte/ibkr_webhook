@@ -121,6 +121,20 @@ class Analysis(unittest.TestCase):
         self.assertTrue(w.spread_ok(bbb, None))
         self.assertTrue(w.spread_ok(sigs[2], 0.05))  # never measured counts as fine
 
+    def test_ladder_alert_before_the_entry_is_counted(self):
+        rows = self.rows()[:1]  # AAA at 15:30 UTC
+        ts = w.epoch("2026-11-19T15:30:00+00:00")
+        from datetime import datetime as dt, timezone as tz
+        early = dt.fromtimestamp(ts - 11, tz.utc).isoformat()
+        late = dt.fromtimestamp(ts + 60, tz.utc).isoformat()
+        ladder = [{"time_utc": early, "symbol": "AAA", "event": "stop_to_breakeven", "trade_id": "1", "level": "0.843", "new_stop": ""},
+                  {"time_utc": late, "symbol": "AAA", "event": "level", "trade_id": "1", "level": "0.786", "new_stop": "100.5"}]
+        sigs = w.build_signals(rows, ladder, [], self.bars_for)
+        self.assertEqual(sigs[0]["ladder_before"], 1)
+        text = w.build_report(sigs, [], "a", "b", [])
+        self.assertIn("## 8.", text)
+        self.assertIn("Bei 1 von 1 Einstiegs-Signalen", text)
+
     def test_summary_numbers(self):
         s = w.summarize([{"r": 2.0, "entry": 100, "stop": 99}, {"r": -1.0, "entry": 50, "stop": 49.5},
                          {"r": None, "entry": 1, "stop": 0.5}])
