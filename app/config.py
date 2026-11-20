@@ -151,6 +151,7 @@ class Settings(BaseSettings):
     # Same for the TF trades: every TF alert, and every closed TF trade.
     tf_signals_file: str = "/data/tf_signals.csv"
     tf_trades_file: str = "/data/tf_trades.csv"
+    tf_ladder_file: str = "/data/tf_ladder.csv"
     # Every version of the bot (code + settings) with what changed, and the
     # alert texts the bot ignores. Kept so results can be compared over time.
     versions_file: str = "/data/versions.csv"

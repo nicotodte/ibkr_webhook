@@ -288,6 +288,11 @@ TF_TRADE_FIELDS = [
     "pnl_usd", "commission_usd", "net_pnl_usd", "r_multiple", "result", "info", "stand",
 ]
 
+# Every ladder alert (stop_to_breakeven / level / exit_all) that reaches the
+# bot, also when it bought nothing: Pine keeps managing each fib whether or
+# not the bot bought it, so these show how an entry the bot did not take went on.
+TF_LADDER_FIELDS = ["time_utc", "symbol", "event", "trade_id", "level", "new_stop", "taken", "stand"]
+
 # Texts the bot ignores (Achtung / HOLD / K=0 of the Longterm script), kept for later review.
 OTHER_ALERT_FIELDS = ["time_utc", "text", "stand"]
 

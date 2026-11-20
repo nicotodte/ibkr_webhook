@@ -15,6 +15,7 @@ os.environ.setdefault("WEBHOOK_SECRET", "test-secret")
 os.environ["STATE_FILE"] = os.path.join(_tmp, "positions.json")
 os.environ["TF_TRADES_FILE"] = os.path.join(_tmp, "tf_trades.csv")
 os.environ["TF_SIGNALS_FILE"] = os.path.join(_tmp, "tf_signals.csv")
+os.environ["TF_LADDER_FILE"] = os.path.join(_tmp, "tf_ladder.csv")
 
 import journal  # noqa: E402
 import tf_report  # noqa: E402
@@ -184,7 +185,7 @@ class FakeIBKR:
 
 class BotFlow(unittest.TestCase):
     def setUp(self):
-        for p in (os.environ["TF_TRADES_FILE"], os.environ["TF_SIGNALS_FILE"]):
+        for p in (os.environ["TF_TRADES_FILE"], os.environ["TF_SIGNALS_FILE"], os.environ["TF_LADDER_FILE"]):
             if os.path.exists(p):
                 os.remove(p)
         run(position_store.delete("NVS"))
@@ -276,6 +277,10 @@ class BotFlow(unittest.TestCase):
         res = run(handlers.handle_level(lv))
         handlers.log_tf_signal(lv, res)
         self.assertEqual(self.rows("TF_SIGNALS_FILE"), [])
+        # ...but the ladder journal keeps it, for the review of signals not taken
+        (ladder,) = self.rows("TF_LADDER_FILE")
+        self.assertEqual((ladder["symbol"], ladder["level"], ladder["new_stop"], ladder["taken"]),
+                         ("NVS", "0.786", "99.5", "nein"))
 
     def test_rejected_entry_is_logged_with_reason(self):
         async def reject(alert, *a, **k):

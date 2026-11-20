@@ -290,6 +290,14 @@ async def tf_signals_csv(token: str = ""):
     return FileResponse(settings.tf_signals_file, media_type="text/csv", filename="tf_signals.csv")
 
 
+@app.get("/tf/ladder.csv")
+async def tf_ladder_csv(token: str = ""):
+    _check_journal_token(token)
+    if not os.path.exists(settings.tf_ladder_file):
+        raise HTTPException(status_code=404, detail="No TF ladder alerts recorded yet")
+    return FileResponse(settings.tf_ladder_file, media_type="text/csv", filename="tf_ladder.csv")
+
+
 @app.get("/mr/stats")
 async def mr_stats(token: str = ""):
     """Index mean reversion, signals only: what would have been invested and

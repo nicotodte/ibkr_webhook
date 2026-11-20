@@ -930,8 +930,21 @@ TF_MIN_AGE_BEFORE_CLOSE_CHECK_SECONDS = 90
 
 def log_tf_signal(alert: BotAlert, result: dict):
     """One row in tf_signals.csv per TF alert. Ladder alerts for a symbol
-    without an open trade are left out: Pine fires them whether or not the
-    bot bought. Never raises."""
+    without an open trade are left out there (Pine fires them whether or not
+    the bot bought) and go to tf_ladder.csv instead. Never raises."""
+    if alert.event != "entry":
+        try:
+            journal.append_row(settings.tf_ladder_file, journal.TF_LADDER_FIELDS, {
+                "time_utc": journal.now_utc(),
+                "symbol": alert.symbol,
+                "event": alert.event,
+                "trade_id": alert.trade_id,
+                "level": alert.level or "",
+                "new_stop": alert.new_stop if alert.new_stop is not None else "",
+                "taken": "ja" if result.get("status") in ("stop_updated", "partial_exit", "closed") else "nein",
+            })
+        except Exception:
+            logger.exception("Could not write the TF ladder journal")
     try:
         if alert.event != "entry" and result.get("reason") == "no_open_position":
             return

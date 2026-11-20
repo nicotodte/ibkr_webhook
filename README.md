@@ -133,6 +133,17 @@ zeigt den aktuellen Stand, `/tf/report` die Ergebnisse je Stand, `/tf/stats` und
 Änderung besser oder schlechter lief. `/data/other_alerts.csv` hält die Texte
 fest, die der Bot ignoriert (Achtung, HOLD, K=0).
 
+**TF-Wochenauswertung:** `tools/weekly_tf_review.py` wertet eine Woche TF-Signale
+aus: was der Bot gekauft hat, was nicht und warum, wie die nicht gekauften
+Signale weitergelaufen wären (Nachspielen mit 5-Minuten-Kursen von Yahoo und den
+Leiter-Alarmen aus `/data/tf_ladder.csv`), und ob andere Handelszeiten
+(z. B. 09:30–15:50 New Yorker Zeit) oder eine andere Spread-Grenze mehr
+Rendite gebracht hätten. Aufruf: `python3 tools/weekly_tf_review.py --token TOKEN`
+(`--days 7`, `--out datei.md`; mit `--dir ordner` aus heruntergeladenen CSVs).
+Der Bot schreibt dafür jeden Leiter-Alarm mit, auch ohne Kauf
+(`https://DOMAIN/tf/ladder.csv?token=…`). Kommissionen und Slippage sind im
+Nachspielen nicht enthalten, die Ergebnisse sind ein Vergleich der Regeln.
+
 Der Listenalarm des Longterm-Skripts schickt auch seine Achtung/HOLD/K=0-
 Texte an den Webhook; alles, was nicht mit `{` beginnt, ignoriert der Bot.
 
