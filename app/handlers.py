@@ -555,6 +555,12 @@ async def _handle_doji(alert: BotAlert, breadth: int = 0) -> dict:
         return checked
     contract, quantity, quote, fx_rate, available_cash_eur = checked
 
+    if settings.doji_reject_bid_at_stop and quote.bid <= alert.stop:
+        logger.info("Rejecting Doji for %s: bid %.2f already at or below the stop %.2f",
+                    alert.symbol, quote.bid, alert.stop)
+        return {"status": "rejected", "reason": "bid_at_stop", "bid": quote.bid, "ask": quote.ask,
+                "detail": f"stop {alert.stop}", "risk_usd": risk_usd}
+
     # US ETFs: an EU retail account gets IBKR error 201 (no KID) on the ETF
     # itself, so the CFD on it is traded. Prices still come from the ETF.
     sec_type = "STK"

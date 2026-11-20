@@ -118,6 +118,11 @@ class Settings(BaseSettings):
     # The buy limit sits this share of the risk above the ask (never above the
     # cap above); the size is computed from it.
     doji_entry_above_ask_pct_of_risk: float = 10.0
+    # No buy when the bid is already at or below the stop: the trade would be
+    # stopped out at once, with slippage far beyond the risk (BLK 20.11.: bid
+    # 1105.22 under the stop 1105.81, -233 instead of -50 USD; also SKHY and
+    # IBB 20.11., AMAT 17.11. -- all four lost 2-5x the planned risk).
+    doji_reject_bid_at_stop: bool = True
     # Risk by breadth: with at least DOJI_BREADTH_MIN_SIGNALS Doji alerts of
     # other symbols in the last DOJI_BREADTH_WINDOW_MINUTES the colour's risk
     # is multiplied by DOJI_BREADTH_HIGH_MULT, otherwise by DOJI_BREADTH_LOW_MULT.

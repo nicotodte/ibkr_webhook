@@ -174,6 +174,21 @@ class DojiEntry(unittest.TestCase):
         self.assertEqual(res["reason"], "price_ran_away")
         self.assertEqual(fake.orders, [])
 
+    def test_bid_already_at_the_stop_is_skipped(self):
+        # BLK 20.11.: bid under the stop, ask just above it -> no buy
+        fake = FakeIBKR(bid=98.95, ask=99.10, fill=99.0)
+        res = self.enter(fake, alert())
+        self.assertEqual(res["reason"], "bid_at_stop")
+        self.assertEqual(fake.orders, [])
+        with open(SIGNALS) as fh:
+            row = list(csv.DictReader(fh))[-1]
+        self.assertEqual((row["status"], row["reason"]), ("rejected", "bid_at_stop"))
+
+    def test_bid_just_above_the_stop_still_buys(self):
+        fake = FakeIBKR(bid=99.05, ask=99.10, fill=99.10)
+        res = self.enter(fake, alert())
+        self.assertEqual(res["status"], "submitted")
+
 
 if __name__ == "__main__":
     unittest.main()
