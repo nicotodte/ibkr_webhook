@@ -488,6 +488,7 @@ async def handle_doji(alert: BotAlert) -> dict:
             "risk_usd": result.get("risk_usd", ""),
             "level": alert.level or "",
             "info": alert.info or "",
+            **journal.candle_columns(alert.candle),
         })
     except Exception:
         logger.exception("Could not write the Doji signal journal")

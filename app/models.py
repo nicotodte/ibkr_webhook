@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Dict, Literal, Optional
 
 from pydantic import BaseModel, field_validator
 
@@ -32,6 +32,10 @@ class BotAlert(BaseModel):
     # Doji only, for the journal: the level the Doji was at and the values the
     # Pine script judged it by (K, volume, fall, VWAP, RSI, ...), as plain text.
     info: Optional[str] = None
+    # Doji only, for the journal: the Doji candle and its surroundings as numbers
+    # (o, h, l, c, atr, vr, st1, st3, e8, e8m15, ft) -- journal.candle_columns
+    # turns them into wick/body/size columns. Recorded only, never a filter.
+    candle: Optional[Dict[str, Optional[float]]] = None
 
     @field_validator("symbol")
     @classmethod

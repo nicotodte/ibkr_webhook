@@ -85,7 +85,12 @@ Margin), dann können mehrere Dojis gleichzeitig gekauft werden.
 (gekauft, abgelehnt mit Grund, ignoriert), jeder geschlossene Doji-Trade in
 `/data/doji_trades.csv` mit den echten Ausführungen: Kaufkurs, R, Höchst- und
 Tiefstkurs (max/min R), Ausstiegsgrund, Durchschnitts-Verkaufskurs, Gewinn in
-USD und in R, Kommission. Mit gesetztem `JOURNAL_TOKEN`:
+USD und in R, Kommission. Ab Pine v36 steht in `doji_signals.csv` auch die
+Doji-Kerze selbst, zum Auswerten, welche Formen am besten laufen (kein Filter):
+Kerzengröße in % des Kurses und in 1m-ATR, Körper und beide Dochte in % der
+Kerze, unterer Docht als Vielfaches des Körpers, Volumen, beide 1m-Supertrends
+(10/1, 10/3), Hoch unter EMA 8 (1m und 15m) und Erstberührung des Levels
+(`first_touch`). Mit gesetztem `JOURNAL_TOKEN`:
 
 - `https://DOMAIN/doji/stats?token=…` — Gewinnquote, Gewinn und R je Farbe,
   Ergebnisse der Alarme, offene Doji-Trades

@@ -116,6 +116,30 @@ class CsvAndStats(unittest.TestCase):
         self.assertEqual(journal.read_rows("/nonexistent/x.csv"), [])
 
 
+class CandleColumns(unittest.TestCase):
+    def test_shape_of_the_doji_candle(self):
+        c = journal.candle_columns({"o": 100.0, "h": 100.10, "l": 99.0, "c": 100.05, "atr": 0.5, "vr": 1.234,
+                                    "st1": 1, "st3": -1, "e8": 101.0, "e8m15": 100.05, "ft": 1})
+        self.assertEqual(c["range_pct"], 1.099)          # 1.10 of 100.05
+        self.assertEqual(c["body_pct"], 4.5)
+        self.assertEqual(c["lower_wick_pct"], 90.9)
+        self.assertEqual(c["upper_wick_pct"], 4.5)
+        self.assertEqual(c["lower_wick_x_body"], 20.0)
+        self.assertEqual(c["range_atr"], 2.2)
+        self.assertEqual(c["vol_ratio"], 1.23)
+        self.assertEqual((c["st_10_1"], c["st_10_3"]), ("down", "up"))
+        self.assertEqual((c["high_below_ema8_1m"], c["high_below_ema8_15m"]), (1, 0))
+        self.assertEqual(c["first_touch"], 1)
+
+    def test_missing_values_stay_empty(self):
+        self.assertTrue(all(v == "" for v in journal.candle_columns(None).values()))
+        c = journal.candle_columns({"o": 10.0, "h": 10.0, "l": 9.0, "c": 10.0, "atr": None, "ft": None, "st1": float("nan")})
+        self.assertEqual(c["lower_wick_x_body"], "")     # no body
+        self.assertEqual(c["lower_wick_pct"], 100.0)
+        self.assertEqual((c["range_atr"], c["first_touch"], c["st_10_1"]), ("", "", ""))
+        self.assertEqual(set(c), set(journal.CANDLE_FIELDS))
+
+
 class TvExport(unittest.TestCase):
     trades = [{"closed_utc": "2026-11-13T15:13:24+00:00", "symbol": "CRWD", "tier": "yellow",
                "trade_id": "1794582721841", "fill_price": "222.54", "initial_stop": "221.9",

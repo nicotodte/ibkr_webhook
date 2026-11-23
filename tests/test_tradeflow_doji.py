@@ -104,9 +104,9 @@ class FakeIBKR:
         return []
 
 
-def alert(symbol="ABC", entry=100.0, stop=99.0, tier="orange", tid="1"):
+def alert(symbol="ABC", entry=100.0, stop=99.0, tier="orange", tid="1", candle=None):
     return BotAlert(secret="test-secret", event="doji", symbol=symbol, trade_id=tid,
-                    entry=entry, stop=stop, tier=tier)
+                    entry=entry, stop=stop, tier=tier, candle=candle)
 
 
 class DojiEntry(unittest.TestCase):
@@ -183,6 +183,24 @@ class DojiEntry(unittest.TestCase):
         with open(SIGNALS) as fh:
             row = list(csv.DictReader(fh))[-1]
         self.assertEqual((row["status"], row["reason"]), ("rejected", "bid_at_stop"))
+
+    def test_candle_shape_is_journaled(self):
+        candle = {"o": 99.9, "h": 100.1, "l": 99.1, "c": 100.0, "atr": 0.4, "vr": 2.0,
+                  "st1": 1, "st3": 1, "e8": 100.5, "e8m15": 101.0, "ft": 0}
+        self.enter(FakeIBKR(99.98, 100.02, 100.02), alert(candle=candle))
+        with open(SIGNALS) as fh:
+            row = list(csv.DictReader(fh))[-1]
+        self.assertEqual(row["candle_low"], "99.1")
+        self.assertEqual(row["lower_wick_pct"], "80.0")
+        self.assertEqual(row["range_atr"], "2.5")
+        self.assertEqual((row["st_10_1"], row["st_10_3"], row["first_touch"]), ("down", "down", "0"))
+
+    def test_alert_without_candle_still_works(self):
+        res = self.enter(FakeIBKR(99.98, 100.02, 100.02), alert())
+        self.assertEqual(res["status"], "submitted")
+        with open(SIGNALS) as fh:
+            row = list(csv.DictReader(fh))[-1]
+        self.assertEqual(row["candle_low"], "")
 
     def test_bid_just_above_the_stop_still_buys(self):
         fake = FakeIBKR(bid=99.05, ask=99.10, fill=99.10)

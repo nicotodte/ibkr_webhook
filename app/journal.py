@@ -17,8 +17,15 @@ from typing import Optional
 SIGNAL_FIELDS = [
     "time_utc", "symbol", "tier", "trade_id", "alert_entry", "alert_stop",
     "status", "reason", "quantity", "bid", "ask", "spread_pct",
-    "spread_pct_of_risk", "slippage_pct_of_risk", "detail", "breadth", "risk_usd", "level", "info", "stand",
+    "spread_pct_of_risk", "slippage_pct_of_risk", "detail", "breadth", "risk_usd", "level", "info",
+    # the Doji candle itself, to find out which shapes run best (candle_columns)
+    "candle_open", "candle_high", "candle_low", "candle_close", "range_pct", "body_pct",
+    "lower_wick_pct", "upper_wick_pct", "lower_wick_x_body", "range_atr", "vol_ratio",
+    "st_10_1", "st_10_3", "high_below_ema8_1m", "high_below_ema8_15m", "first_touch",
+    "stand",
 ]
+
+CANDLE_FIELDS = SIGNAL_FIELDS[SIGNAL_FIELDS.index("candle_open"):SIGNAL_FIELDS.index("stand")]
 
 TRADE_FIELDS = [
     "closed_utc", "opened_utc", "symbol", "tier", "trade_id",
@@ -301,6 +308,56 @@ TF_LADDER_FIELDS = ["time_utc", "symbol", "event", "trade_id", "level", "new_sto
 
 # Texts the bot ignores (Achtung / HOLD / K=0 of the Longterm script), kept for later review.
 OTHER_ALERT_FIELDS = ["time_utc", "text", "stand"]
+
+
+def candle_columns(candle: Optional[dict]) -> dict:
+    """The Doji candle as journal columns: OHLC, size of the candle in % of the
+    price and in 1m ATRs, body and both wicks in % of the candle, lower wick as a
+    multiple of the body, volume vs. average, both 1m Supertrends (10/1, 10/3),
+    high below EMA 8 (1m and 15m) and whether the level was touched for the
+    first time. Missing values stay empty."""
+    out = {k: "" for k in CANDLE_FIELDS}
+    if not candle:
+        return out
+
+    def num(key):
+        try:
+            v = float(candle.get(key))
+        except (TypeError, ValueError):
+            return None
+        return v if v == v else None          # NaN -> None
+
+    o, h, l, c = num("o"), num("h"), num("l"), num("c")
+    if None not in (o, h, l, c):
+        out.update(candle_open=o, candle_high=h, candle_low=l, candle_close=c)
+        rng, body = h - l, abs(c - o)
+        lower, upper = min(o, c) - l, h - max(o, c)
+        if c > 0:
+            out["range_pct"] = round(rng / c * 100, 3)
+        if rng > 0:
+            out["body_pct"] = round(body / rng * 100, 1)
+            out["lower_wick_pct"] = round(lower / rng * 100, 1)
+            out["upper_wick_pct"] = round(upper / rng * 100, 1)
+        if body > 0:
+            out["lower_wick_x_body"] = round(lower / body, 2)
+        atr = num("atr")
+        if atr:
+            out["range_atr"] = round(rng / atr, 2)
+        for key, col in (("e8", "high_below_ema8_1m"), ("e8m15", "high_below_ema8_15m")):
+            e = num(key)
+            if e is not None:
+                out[col] = 1 if h < e else 0
+    vr = num("vr")
+    if vr is not None:
+        out["vol_ratio"] = round(vr, 2)
+    for key, col in (("st1", "st_10_1"), ("st3", "st_10_3")):
+        d = num(key)
+        if d is not None:
+            out[col] = "down" if d > 0 else "up"
+    ft = num("ft")
+    if ft is not None:
+        out["first_touch"] = int(ft)
+    return out
 
 
 def result_label(r_multiple) -> str:
