@@ -190,6 +190,12 @@ def stats(rows: list) -> dict:
     return out
 
 
+def red_stats(rows: list) -> dict:
+    """Total and per fib level the candle reached, from red_trades.csv rows."""
+    out = {"total": bucket(rows)}
+    return out
+
+
 def _secs(iso: str) -> Optional[int]:
     try:
         return int(datetime.fromisoformat(iso).timestamp())

@@ -144,6 +144,17 @@ Der Bot schreibt dafür jeden Leiter-Alarm mit, auch ohne Kauf
 (`https://DOMAIN/tf/ladder.csv?token=…`). Kommissionen und Slippage sind im
 Nachspielen nicht enthalten, die Ergebnisse sind ein Vergleich der Regeln.
 
+**Rote Kerze (`tier: "red"`):** Zusatz-Signal des TF-Skripts, dicke rote Kerze
+(Körper 60–80 % der Kerze) bei K = 0, beide Supertrends rot, EMAs in Reihenfolge,
+Hoch unter EMA 8, Kerzentief auf oder unter einem der Fib-Level 0.618 / 0.8409 /
+0.9 / 0.95 / 0.975 / 0.995. Kommt als `event: "doji"` mit `tier: "red"` und läuft
+auf dem Doji-Weg: Kauflimit knapp über dem Ask, Viertel bei 2 / 5 / 10 R, Stopp-
+Leiter, Trail. Eigenes Risiko `DOJI_RISK_RED_USD` (50 $) ohne Breadth-Faktor,
+eigener Trail `DOJI_TRAIL_R_RED` (5 R). Sie zählt nicht für die Doji-Breadth und
+steht in eigenen Dateien: `/data/red_signals.csv`, `/data/red_trades.csv`
+(`https://DOMAIN/red/stats?token=…`, `/red/trades.csv`, `/red/signals.csv`), nicht in
+den Doji-Zahlen.
+
 Der Listenalarm des Longterm-Skripts schickt auch seine Achtung/HOLD/K=0-
 Texte an den Webhook; alles, was nicht mit `{` beginnt, ignoriert der Bot.
 

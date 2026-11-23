@@ -426,6 +426,7 @@ def _doji_risk(tier: str) -> float:
         "green": settings.doji_risk_green_usd,
         "yellow": settings.doji_risk_yellow_usd,
         "orange": settings.doji_risk_orange_usd,
+        "red": settings.doji_risk_red_usd,
     }[tier]
 
 
@@ -434,6 +435,7 @@ def _doji_trail_r(tier: str) -> float:
         "green": settings.doji_trail_r_green,
         "yellow": settings.doji_trail_r_yellow,
         "orange": settings.doji_trail_r_orange,
+        "red": settings.doji_trail_r_red,
     }.get(tier, settings.doji_trail_r_orange)
 
 
@@ -450,13 +452,23 @@ async def _stop_doji_stream(symbol: str):
 _breadth = doji.Breadth(settings.doji_breadth_window_minutes * 60)
 
 
+def _signals_file(tier) -> str:
+    """The red-candle tactic is journaled apart from the Dojis."""
+    return settings.red_signals_file if tier == "red" else settings.doji_signals_file
+
+
+def _trades_file(tier) -> str:
+    return settings.red_trades_file if tier == "red" else settings.doji_trades_file
+
+
 async def handle_doji(alert: BotAlert) -> dict:
     # Counted before any check: every Doji alert that arrives says something
     # about the market, also the ones that are not bought.
-    breadth = _breadth.add(time.time(), alert.symbol)
+    # The red candle is no Doji: it neither counts here nor gets the breadth risk.
+    breadth = 0 if alert.tier == "red" else _breadth.add(time.time(), alert.symbol)
     result = await _handle_doji(alert, breadth)
     try:
-        journal.append_row(settings.doji_signals_file, journal.SIGNAL_FIELDS, {
+        journal.append_row(_signals_file(alert.tier), journal.SIGNAL_FIELDS, {
             "time_utc": journal.now_utc(),
             "symbol": alert.symbol,
             "tier": alert.tier or "",
@@ -541,6 +553,8 @@ async def _handle_doji(alert: BotAlert, breadth: int = 0) -> dict:
     # More risk when many Dojis come at once (broad sell-off), less for a
     # lone one -- every signal is still taken.
     mult = settings.doji_breadth_high_mult if breadth >= settings.doji_breadth_min_signals else settings.doji_breadth_low_mult
+    if alert.tier == "red":
+        mult = 1.0
     risk_usd = _doji_risk(alert.tier) * mult
     logger.info("Doji %s: %s other Dojis in the last %.0f min -> risk x%.1f = %.0f USD",
                 alert.symbol, breadth, settings.doji_breadth_window_minutes, mult, risk_usd)
@@ -919,7 +933,7 @@ def _journal_close(state: TradeState, reason: str):
             fills=state.fills,
         )
         row["stand"] = state.stand
-        journal.append_row(settings.doji_trades_file, journal.TRADE_FIELDS, row)
+        journal.append_row(_trades_file(state.tier), journal.TRADE_FIELDS, row)
         logger.info(
             "Doji journal %s %s: net %.2f USD, %s R (%s)",
             state.symbol, state.tier, row["net_pnl_usd"], row["r_multiple"], reason,

@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     doji_risk_green_usd: float = 100.0
     doji_risk_yellow_usd: float = 25.0
     doji_risk_orange_usd: float = 50.0
+    # "Rote Kerze" (tier "red", sent by the TF script): thick red candle with K at
+    # 0, both Supertrends red, EMAs in order. Runs on the Doji engine (quarters at
+    # 2/5/10 R, ladder stop, trail) but is sized and journaled on its own.
+    doji_risk_red_usd: float = 50.0
     # Entry window for Doji trades. Many good orange Dojis come in the first
     # minutes after the open, so unlike the TF entries they are not skipped.
     # The alert comes a few seconds after the Doji candle closed, often into
@@ -105,6 +109,7 @@ class Settings(BaseSettings):
     doji_trail_r_green: float = 5.0
     doji_trail_r_yellow: float = 5.0
     doji_trail_r_orange: float = 3.0
+    doji_trail_r_red: float = 5.0
     # Orange sells this share of the position at 2 R (instead of a quarter at
     # 2, 5 and 10 R); the rest trails. 0.25 = quarters like green and yellow.
     doji_orange_first_target_share: float = 0.25
@@ -152,6 +157,9 @@ class Settings(BaseSettings):
     # empty keeps them switched off.
     doji_signals_file: str = "/data/doji_signals.csv"
     doji_trades_file: str = "/data/doji_trades.csv"
+    # The same for the red-candle tactic, kept apart from the Doji numbers.
+    red_signals_file: str = "/data/red_signals.csv"
+    red_trades_file: str = "/data/red_trades.csv"
     journal_token: str = ""
     # Same for the TF trades: every TF alert, and every closed TF trade.
     tf_signals_file: str = "/data/tf_signals.csv"

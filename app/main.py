@@ -184,7 +184,7 @@ async def doji_stats(token: str = ""):
     open_trades = [
         {"symbol": t.symbol, "tier": t.tier, "entry": t.entry_price, "stop": t.stop_price,
          "high": t.high_water, "trailing": t.trailing}
-        for t in await position_store.all_open() if t.strategy == "doji"
+        for t in await position_store.all_open() if t.strategy == "doji" and t.tier != "red"
     ]
     return {
         "closed_trades": journal.stats(trades),
@@ -201,7 +201,7 @@ async def doji_tv(token: str = ""):
     _check_journal_token(token)
     open_trades = [
         {"symbol": t.symbol, "tier": t.tier, "trade_id": t.trade_id, "entry": t.entry_price, "stop": t.stop_price}
-        for t in await position_store.all_open() if t.strategy == "doji"
+        for t in await position_store.all_open() if t.strategy == "doji" and t.tier != "red"
     ]
     text = journal.tv_export(
         journal.read_all(settings.doji_trades_file),
@@ -209,6 +209,45 @@ async def doji_tv(token: str = ""):
         open_trades,
     )
     return PlainTextResponse(text or "noch keine Doji-Signale")
+
+
+@app.get("/red/stats")
+async def red_stats(token: str = ""):
+    """Win rate, P&L and R of the red-candle trades, and what happened to its signals."""
+    _check_journal_token(token)
+    trades = journal.read_all(settings.red_trades_file)
+    signals = journal.read_all(settings.red_signals_file)
+    reasons: dict[str, int] = {}
+    for row in signals:
+        key = row.get("status", "") + (": " + row["reason"] if row.get("reason") else "")
+        reasons[key] = reasons.get(key, 0) + 1
+    open_trades = [
+        {"symbol": t.symbol, "entry": t.entry_price, "stop": t.stop_price, "high": t.high_water,
+         "trailing": t.trailing}
+        for t in await position_store.all_open() if t.strategy == "doji" and t.tier == "red"
+    ]
+    return {
+        "closed_trades": journal.red_stats(trades),
+        "by_stand": journal.stats_by_stand(trades),
+        "signals": {"total": len(signals), "by_outcome": reasons},
+        "open_trades": open_trades,
+    }
+
+
+@app.get("/red/trades.csv")
+async def red_trades_csv(token: str = ""):
+    _check_journal_token(token)
+    if not os.path.exists(settings.red_trades_file):
+        raise HTTPException(status_code=404, detail="No red-candle trades recorded yet")
+    return FileResponse(settings.red_trades_file, media_type="text/csv", filename="red_trades.csv")
+
+
+@app.get("/red/signals.csv")
+async def red_signals_csv(token: str = ""):
+    _check_journal_token(token)
+    if not os.path.exists(settings.red_signals_file):
+        raise HTTPException(status_code=404, detail="No red-candle signals recorded yet")
+    return FileResponse(settings.red_signals_file, media_type="text/csv", filename="red_signals.csv")
 
 
 @app.get("/doji/trades.csv")

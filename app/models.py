@@ -28,7 +28,7 @@ class BotAlert(BaseModel):
     stop: Optional[float] = None
     level: Optional[str] = None
     new_stop: Optional[float] = None
-    tier: Optional[Literal["green", "yellow", "orange"]] = None
+    tier: Optional[Literal["green", "yellow", "orange", "red"]] = None
     # Doji only, for the journal: the level the Doji was at and the values the
     # Pine script judged it by (K, volume, fall, VWAP, RSI, ...), as plain text.
     info: Optional[str] = None
